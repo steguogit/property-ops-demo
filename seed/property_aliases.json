@@ -1,0 +1,84 @@
+[
+  {
+    "_id": "icc",
+    "canonicalName": "ICC",
+    "officialChineseName": "環球貿易廣場",
+    "aliases": [
+      "ICC",
+      "International Commerce Centre",
+      "環球貿易廣場",
+      "環貿廣場"
+    ],
+    "historicalNames": [
+      { "name": "Union Square Phase 7", "usedFrom": "2005", "usedUntil": "2010" }
+    ],
+    "region": "West Kowloon",
+    "segment": "office_tower",
+    "note": "Tallest tower in the portfolio. Any incident/SOP referencing 環球貿易廣場 is ICC.",
+    "updatedAt": "2025-05-01"
+  },
+  {
+    "_id": "yoho-mall",
+    "canonicalName": "YOHO Mall",
+    "officialChineseName": "形點",
+    "aliases": ["YOHO Mall", "形點", "YOHO MALL I", "YOHO MALL II"],
+    "region": "Yuen Long",
+    "segment": "shopping_mall",
+    "note": "形點 is the official Chinese name. Do NOT confuse with Grand YOHO (residential).",
+    "updatedAt": "2025-05-01"
+  },
+  {
+    "_id": "moko",
+    "canonicalName": "MOKO",
+    "officialChineseName": "新世紀廣場",
+    "aliases": ["MOKO", "MOKO 新世紀廣場", "新世紀廣場", "Grand Century Place"],
+    "historicalNames": [
+      {
+        "name": "Grand Century Place",
+        "usedFrom": "1997",
+        "usedUntil": "2013"
+      }
+    ],
+    "region": "Mong Kok",
+    "segment": "shopping_mall",
+    "note": "Rebranded from Grand Century Place to MOKO in 2013. Older records use the historical name.",
+    "updatedAt": "2025-05-01"
+  },
+  {
+    "_id": "new-town-plaza",
+    "canonicalName": "New Town Plaza",
+    "officialChineseName": "新城市廣場",
+    "aliases": ["New Town Plaza", "新城市廣場", "NTP"],
+    "region": "Sha Tin",
+    "segment": "shopping_mall",
+    "updatedAt": "2025-05-01"
+  },
+  {
+    "_id": "metropolis-plaza",
+    "canonicalName": "Metropolis Plaza",
+    "officialChineseName": "新都會廣場",
+    "aliases": ["Metropolis Plaza", "新都會廣場"],
+    "region": "Sheung Shui",
+    "segment": "shopping_mall",
+    "updatedAt": "2025-05-01"
+  },
+  {
+    "_id": "grand-yoho",
+    "canonicalName": "Grand YOHO",
+    "officialChineseName": "Grand YOHO",
+    "aliases": ["Grand YOHO", "Grand YOHO Development"],
+    "region": "Yuen Long",
+    "segment": "residential_estate",
+    "note": "Residential estate adjacent to YOHO Mall. Distinct property.",
+    "updatedAt": "2025-05-01"
+  },
+  {
+    "_id": "park-island",
+    "canonicalName": "Park Island",
+    "officialChineseName": "珀麗灣",
+    "aliases": ["Park Island", "珀麗灣"],
+    "region": "Ma Wan",
+    "segment": "residential_estate",
+    "updatedAt": "2025-05-01"
+  }
+]

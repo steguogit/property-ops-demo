@@ -1,0 +1,47 @@
+{
+  "name": "property-ops-retrieval-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local MongoDB Atlas hybrid-search + reranking + RAG demo for a property-management operations assistant.",
+  "scripts": {
+    "dev": "next dev -p 3100",
+    "build": "next build",
+    "start": "next start -p 3100",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "seed": "tsx scripts/seed.ts",
+    "seed-policies": "tsx scripts/seed-policies.ts",
+    "migrate-policies": "tsx scripts/migrate-corrections-to-policies.ts",
+    "create-indexes": "tsx scripts/create-indexes.ts",
+    "reindex": "tsx scripts/create-indexes.ts --recreate",
+    "embed-multimodal": "tsx scripts/embed-multimodal.ts",
+    "reset": "tsx scripts/reset.ts",
+    "setup": "npm run create-indexes && npm run seed",
+    "test": "tsx tests/unit.test.ts",
+    "test:unit": "tsx tests/unit.test.ts",
+    "test:integration": "tsx tests/integration.guanshuihou.test.ts",
+    "test:all": "npm run test:unit && npm run test:integration"
+  },
+  "dependencies": {
+    "@gutenye/ocr-node": "^1.4.8",
+    "jszip": "^3.10.1",
+    "mammoth": "^1.12.0",
+    "mongodb": "^6.10.0",
+    "next": "^14.2.33",
+    "pdf-parse": "^2.4.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tesseract.js": "^7.0.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.5",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.0",
+    "dotenv": "^16.4.5",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "^14.2.33",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3"
+  }
+}

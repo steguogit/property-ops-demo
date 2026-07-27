@@ -1,0 +1,21 @@
+{
+  "_comment": "Vector Search index using Atlas Automatic Embedding (EMBEDDING_STRATEGY=atlas). Atlas generates and stores embeddings from 'chunkText' on every insert/update, and embeds query strings at search time - so editing a record automatically updates its vector with no re-seed. Requires a voyage-4 family model (voyage-4, voyage-4-lite, voyage-4-large, voyage-code-3). Create in Atlas UI: Database > Search > Create Index > JSON Editor > Vector Search. Index name must match ATLAS_VECTOR_INDEX (default 'vector_index').",
+  "fields": [
+    {
+      "type": "autoEmbed",
+      "path": "chunkText",
+      "modality": "text",
+      "model": "voyage-4"
+    },
+    { "type": "filter", "path": "docType" },
+    { "type": "filter", "path": "segment" },
+    { "type": "filter", "path": "propertyName" },
+    { "type": "filter", "path": "language" },
+    { "type": "filter", "path": "audience" },
+    { "type": "filter", "path": "tags" },
+    { "type": "filter", "path": "obsoleteFlag" },
+    { "type": "filter", "path": "versionLabel" },
+    { "type": "filter", "path": "versionGroupId" },
+    { "type": "filter", "path": "documentId" }
+  ]
+}

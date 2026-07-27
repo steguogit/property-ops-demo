@@ -1,0 +1,21 @@
+{
+  "_comment": "Atlas Vector Search index. Create in Atlas UI: Database > Search > Create Index > JSON Editor > Vector Search. Index name MUST match ATLAS_VECTOR_INDEX (default 'vector_index'). numDimensions must match VOYAGE_EMBED_DIM (voyage-3 = 1024).",
+  "fields": [
+    {
+      "type": "vector",
+      "path": "embedding",
+      "numDimensions": 1024,
+      "similarity": "cosine"
+    },
+    { "type": "filter", "path": "docType" },
+    { "type": "filter", "path": "segment" },
+    { "type": "filter", "path": "propertyName" },
+    { "type": "filter", "path": "language" },
+    { "type": "filter", "path": "audience" },
+    { "type": "filter", "path": "tags" },
+    { "type": "filter", "path": "obsoleteFlag" },
+    { "type": "filter", "path": "versionLabel" },
+    { "type": "filter", "path": "versionGroupId" },
+    { "type": "filter", "path": "documentId" }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "_comment": "Atlas Search (lexical) index. Create in Atlas UI: Database > Search > Create Index > JSON Editor > Atlas Search. Index name MUST match ATLAS_SEARCH_INDEX (default 'lexical_index'). Drives BM25-style lexical retrieval over chunk text + exact entity/alias fields for hybrid search.",
+  "mappings": {
+    "dynamic": false,
+    "fields": {
+      "chunkText": { "type": "string" },
+      "sourceText": { "type": "string" },
+      "title": { "type": "string" },
+      "exactTerms": { "type": "string" },
+      "propertyAliases": { "type": "string" },
+      "propertyName": { "type": "string" },
+      "docType": { "type": "string" },
+      "tags": { "type": "string" },
+      "obsoleteFlag": { "type": "boolean" },
+      "versionLabel": { "type": "token" },
+      "versionGroupId": { "type": "token" },
+      "documentId": { "type": "token" },
+      "sourceFileType": { "type": "token" }
+    }
+  }
+}

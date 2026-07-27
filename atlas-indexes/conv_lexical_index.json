@@ -1,0 +1,11 @@
+{
+  "_comment": "Conversation-memory Atlas Search (lexical/keyword) index. Create in Atlas UI on the 'conversation_messages' collection: Database > Search > Create Index > JSON Editor. Index name MUST match ATLAS_CONV_SEARCH_INDEX (default 'conv_lexical_index').",
+  "mappings": {
+    "dynamic": false,
+    "fields": {
+      "messageText": { "type": "string" },
+      "conversationId": { "type": "token" },
+      "role": { "type": "token" }
+    }
+  }
+}

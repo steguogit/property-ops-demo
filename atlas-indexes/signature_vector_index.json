@@ -1,0 +1,12 @@
+{
+  "_comment": "Signature-comparison Vector Search index. Create in Atlas UI on the 'signatures' collection: Database > Search > Create Index > JSON Editor > Vector Search. Index name MUST match ATLAS_SIGNATURE_VECTOR_INDEX (default 'signature_vector_index'). Vectors are voyage-multimodal-3.5 IMAGE embeddings (1024d) stored in 'embedding'.",
+  "fields": [
+    {
+      "type": "vector",
+      "path": "embedding",
+      "numDimensions": 1024,
+      "similarity": "cosine"
+    },
+    { "type": "filter", "path": "signerName" }
+  ]
+}

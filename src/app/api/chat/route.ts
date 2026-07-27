@@ -1,0 +1,45 @@
+import { NextRequest, NextResponse } from "next/server";
+import { chatRag } from "@/lib/rag";
+import { createConversation } from "@/lib/memory";
+import { explainForMode } from "@/lib/explain";
+
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+
+/**
+ * Send one turn in a conversation. If no conversationId is supplied a new
+ * conversation is created (titled from the first question). Returns the grounded
+ * answer, sources, recalled memory, and the (possibly new) conversationId.
+ */
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const query: string = (body.query ?? "").trim();
+    const limit: number = body.limit ?? 6;
+    const includeObsolete: boolean = body.includeObsolete ?? false;
+    const recallFromAllConversations: boolean =
+      body.recallFromAllConversations ?? false;
+    let conversationId: string = body.conversationId ?? "";
+
+    if (!query) {
+      return NextResponse.json({ error: "query is required" }, { status: 400 });
+    }
+
+    // Auto-create a thread on the first turn, titled from the question.
+    if (!conversationId) {
+      const conv = await createConversation(
+        query.length > 60 ? query.slice(0, 57) + "…" : query
+      );
+      conversationId = conv.conversationId;
+    }
+
+    const result = await chatRag(conversationId, query, limit, {
+      includeObsolete,
+      recallFromAllConversations,
+    });
+    const explain = explainForMode("rag", query, limit, { includeObsolete });
+    return NextResponse.json({ query, ...result, explain });
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+  }
+}

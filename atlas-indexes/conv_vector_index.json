@@ -1,0 +1,25 @@
+{
+  "_comment": "Conversation-memory Vector Search index. Create in Atlas UI on the 'conversation_messages' collection: Database > Search > Create Index > JSON Editor > Vector Search. Index name MUST match ATLAS_CONV_VECTOR_INDEX (default 'conv_vector_index'). Use the 'autoEmbed' variant below if EMBEDDING_STRATEGY=atlas; otherwise use the explicit 'vector' variant on the 'embedding' field. numDimensions must match your embed model (voyage-3/voyage-4 = 1024).",
+  "fields": [
+    {
+      "type": "vector",
+      "path": "embedding",
+      "numDimensions": 1024,
+      "similarity": "cosine"
+    },
+    { "type": "filter", "path": "conversationId" },
+    { "type": "filter", "path": "role" }
+  ],
+  "_autoEmbedVariant": {
+    "fields": [
+      {
+        "type": "autoEmbed",
+        "path": "messageText",
+        "modality": "text",
+        "model": "voyage-4"
+      },
+      { "type": "filter", "path": "conversationId" },
+      { "type": "filter", "path": "role" }
+    ]
+  }
+}

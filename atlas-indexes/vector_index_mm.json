@@ -1,0 +1,21 @@
+{
+  "_comment": "Secondary Atlas Vector Search index for the voyage-multimodal-3.5 comparison. Create in Atlas UI: Database > Search > Create Index > JSON Editor > Vector Search. Index name MUST match ATLAS_VECTOR_INDEX_MM (default 'vector_index_mm'). numDimensions must match MULTIMODAL_EMBED_DIM (voyage-multimodal-3.5 = 1024). Vectors are written client-side into the 'embeddingMultimodal' field.",
+  "fields": [
+    {
+      "type": "vector",
+      "path": "embeddingMultimodal",
+      "numDimensions": 1024,
+      "similarity": "cosine"
+    },
+    { "type": "filter", "path": "docType" },
+    { "type": "filter", "path": "segment" },
+    { "type": "filter", "path": "propertyName" },
+    { "type": "filter", "path": "language" },
+    { "type": "filter", "path": "audience" },
+    { "type": "filter", "path": "tags" },
+    { "type": "filter", "path": "obsoleteFlag" },
+    { "type": "filter", "path": "versionLabel" },
+    { "type": "filter", "path": "versionGroupId" },
+    { "type": "filter", "path": "documentId" }
+  ]
+}
