@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { chatRag } from "@/lib/rag";
 import { createConversation } from "@/lib/memory";
 import { explainForMode } from "@/lib/explain";
+import { modelsForMode } from "@/lib/models";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -38,7 +39,12 @@ export async function POST(req: NextRequest) {
       recallFromAllConversations,
     });
     const explain = explainForMode("rag", query, limit, { includeObsolete });
-    return NextResponse.json({ query, ...result, explain });
+    return NextResponse.json({
+      query,
+      ...result,
+      explain,
+      models: modelsForMode("rag"),
+    });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }

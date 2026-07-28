@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runRag } from "@/lib/rag";
 import { explainForMode } from "@/lib/explain";
+import { modelsForMode } from "@/lib/models";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -16,7 +17,12 @@ export async function POST(req: NextRequest) {
     }
     const result = await runRag(query, limit, { includeObsolete });
     const explain = explainForMode("rag", query, limit, { includeObsolete });
-    return NextResponse.json({ query, ...result, explain });
+    return NextResponse.json({
+      query,
+      ...result,
+      explain,
+      models: modelsForMode("rag"),
+    });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }

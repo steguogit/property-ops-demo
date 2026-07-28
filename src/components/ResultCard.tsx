@@ -35,19 +35,54 @@ export interface Hit {
   correctionNote?: string;
 }
 
-function highlight(text: string, terms: string[]) {
-  if (!terms?.length) return text;
-  const sorted = [...new Set(terms)].sort((a, b) => b.length - a.length);
-  const escaped = sorted.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+// Common words to skip so highlighting focuses on meaningful query keywords.
+const STOP = new Set([
+  "the", "a", "an", "of", "for", "to", "in", "on", "and", "or", "is", "are",
+  "what", "how", "when", "where", "which", "who", "with", "at", "by", "from",
+  "list", "show", "the", "please", "me", "my", "i", "do", "does", "as",
+]);
+
+/** Tokenise a query into highlightable keywords (words + CJK runs). */
+function queryTerms(query?: string): string[] {
+  if (!query) return [];
+  const out: string[] = [];
+  // Latin words length>=2 (skip stopwords) + CJK character runs.
+  const re = /[A-Za-z0-9]{2,}|[\u3400-\u9FFF\uF900-\uFAFF]+/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(query)) !== null) {
+    const w = m[0];
+    if (/^[A-Za-z]+$/.test(w) && STOP.has(w.toLowerCase())) continue;
+    out.push(w);
+  }
+  return [...new Set(out)];
+}
+
+/**
+ * Highlight matched exact-terms strongly (<mark class="strong">) and query
+ * keywords softly (<mark>). Works even for pure vector search (no lexical
+ * matches) by falling back to query-keyword highlighting.
+ */
+function highlight(text: string, strongTerms: string[], softTerms: string[]) {
+  const all = [
+    ...new Set([...strongTerms, ...softTerms].filter(Boolean)),
+  ].sort((a, b) => b.length - a.length);
+  if (!all.length) return text;
+  const strongSet = new Set(strongTerms.map((s) => s.toLowerCase()));
+  const escaped = all.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
   const re = new RegExp(`(${escaped.join("|")})`, "gi");
   const parts = text.split(re);
-  return parts.map((p, i) =>
-    sorted.some((t) => t.toLowerCase() === p.toLowerCase()) ? (
-      <mark key={i}>{p}</mark>
+  return parts.map((p, i) => {
+    const lower = p.toLowerCase();
+    const isMatch = all.some((t) => t.toLowerCase() === lower);
+    if (!isMatch) return <React.Fragment key={i}>{p}</React.Fragment>;
+    return strongSet.has(lower) ? (
+      <mark className="hl-strong" key={i}>
+        {p}
+      </mark>
     ) : (
-      <React.Fragment key={i}>{p}</React.Fragment>
-    )
-  );
+      <mark key={i}>{p}</mark>
+    );
+  });
 }
 
 const TYPE_LABEL: Record<string, string> = {
@@ -67,12 +102,16 @@ const TYPE_LABEL: Record<string, string> = {
 export function ResultCard({
   hit,
   onPreview,
+  query,
 }: {
   hit: Hit;
   onPreview?: (target: PreviewTarget) => void;
+  /** The search/answer query — its keywords are softly highlighted in the excerpt. */
+  query?: string;
 }) {
   const { t } = useI18n();
   const matched = hit.matchedTerms ?? [];
+  const soft = queryTerms(query);
   // Only uploaded documents (DOC-*) have an original file stored in GridFS.
   const canPreview =
     !!onPreview &&
@@ -115,7 +154,7 @@ export function ResultCard({
         ))}
       </div>
 
-      <div className="excerpt">{highlight(hit.chunkText, matched)}</div>
+      <div className="excerpt">{highlight(hit.chunkText, matched, soft)}</div>
 
       {canPreview && (
         <button

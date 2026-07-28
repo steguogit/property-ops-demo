@@ -48,12 +48,42 @@ function policyGroundingBlock(plan: ResolvedPolicyPlan | null): string {
   return lines.join("\n");
 }
 
+/**
+ * Best-effort page reference for a retrieved chunk so answers can cite exact
+ * pages. Sources, in priority order:
+ *   1. `pageImageIndex` (scanned-PDF page-image chunks) → page N (1-based)
+ *   2. `[Page N]` markers embedded in the OCR/extracted chunkText
+ * Returns e.g. "p.3" / "pp.3-5", or undefined when unknown.
+ */
+function pageRefFor(h: SearchHit): string | undefined {
+  if (typeof h.pageImageIndex === "number") {
+    return `p.${h.pageImageIndex + 1}`;
+  }
+  const nums = new Set<number>();
+  const re = /\[Page\s+(\d+)\]/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(h.chunkText || "")) !== null) {
+    const n = parseInt(m[1], 10);
+    if (!Number.isNaN(n)) nums.add(n);
+  }
+  if (!nums.size) return undefined;
+  const sorted = [...nums].sort((a, b) => a - b);
+  return sorted.length === 1
+    ? `p.${sorted[0]}`
+    : `pp.${sorted[0]}-${sorted[sorted.length - 1]}`;
+}
+
 function buildContext(hits: SearchHit[]): string {
   return hits
-    .map(
-      (h, i) =>
-        `[#${i + 1}] (${h.docId}, ${h.docType}, property: ${h.propertyName})\nTitle: ${h.title}\n${h.chunkText}`
-    )
+    .map((h, i) => {
+      const page = pageRefFor(h);
+      const src = h.sourceFileName ? `, file: ${h.sourceFileName}` : "";
+      const loc = page ? `, ${page}` : "";
+      return (
+        `[#${i + 1}] (${h.docId}, ${h.docType}, property: ${h.propertyName}${src}${loc})\n` +
+        `Title: ${h.title}\n${h.chunkText}`
+      );
+    })
     .join("\n\n");
 }
 
@@ -102,7 +132,14 @@ async function llmAnswer(
     (conversational
       ? "This is a multi-turn conversation: use the prior turns and recalled memory to resolve references like 'it', 'that', 'the previous one'. "
       : "") +
-    "If the context does not contain the answer, say so. Handle English and Chinese property names/aliases correctly.";
+    // ---- Output formatting & grounding rules ----
+    "OUTPUT RULES: " +
+    "1) CALCULATIONS: Whenever the answer involves any numbers, totals, sums, differences, percentages, rates, or reconciliations, present them as a Markdown TABLE with an explicit line-item breakdown (one row per component) plus a final Total row. " +
+    "Only use figures that appear verbatim in the context; never invent or estimate numbers. In each row, cite the source in a column, e.g. [DOC-ID p.3]. If a needed figure is missing from the context, write 'not stated' rather than guessing. " +
+    "2) SUMMARIES / FACTUAL ANSWERS: Ground every statement in the context. After each fact or bullet, cite the exact source AND page, e.g. [DOC-ID p.3] or [DOC-ID pp.3-5]. " +
+    "Each context record is labelled with its docId and page (p.N) — use those exact page numbers; if a record has no page label, cite the docId only. " +
+    "3) Do NOT state anything not supported by the context. If the answer is not in the context, say so explicitly. Do not hide uncertainty — if a figure or fact is partial or ambiguous, say so. " +
+    "Handle English and Chinese property names/aliases correctly.";
 
   // Authoritative approved-policy grounding takes precedence over the legacy
   // correction overlay.
@@ -118,7 +155,9 @@ async function llmAnswer(
     (extra?.recalledContext
       ? `Relevant earlier conversation memory:\n${extra.recalledContext}\n\n`
       : "") +
-    `Context records:\n${context}\n\nProvide a grounded answer with inline [docId] citations.`;
+    `Context records:\n${context}\n\n` +
+    "Provide a grounded answer. Cite sources inline as [docId p.N] using the docId and page label shown for each record. " +
+    "If the answer involves any numbers/totals, show a Markdown table with a per-line-item breakdown and a Total row (figures only from the context).";
 
   // Grove gateway uses an `api-key` header; OpenAI-compatible uses Bearer.
   const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -337,10 +376,19 @@ export async function generateFromHits(
 // Conversational RAG (multi-turn, with MongoDB-backed memory).
 // ---------------------------------------------------------------------------
 
+/** One pipeline stage of a conversational turn (for the collapsible steps UI). */
+export interface ChatStep {
+  step: string;
+  ms: number;
+  note?: string;
+}
+
 export interface ChatResult extends RagResult {
   conversationId: string;
   /** Older turns recalled from memory (semantic + keyword) for this question. */
   recalled: RecalledMessage[];
+  /** Ordered pipeline steps taken to produce this turn (for transparency). */
+  steps: ChatStep[];
 }
 
 function buildRecalledContext(recalled: RecalledMessage[]): string {
@@ -371,10 +419,20 @@ export async function chatRag(
     policyContext?: import("./policy-resolver").QueryContext;
   } = {}
 ): Promise<ChatResult> {
+  const steps: ChatStep[] = [];
+  const stepTimer = (step: string) => {
+    const t0 = Date.now();
+    return (note?: string) =>
+      steps.push({ step, ms: Date.now() - t0, note });
+  };
+
   // 1. Persist the user's turn first (so it's part of memory + embedded).
+  const endPersistUser = stepTimer("Store user turn in memory (embedded)");
   await appendMessage(conversationId, "user", query);
+  endPersistUser();
 
   // 2. Gather conversation context: recent window + recalled older turns.
+  const endHistory = stepTimer("Load recent conversation window");
   const recentDocs = await getRecentMessages(conversationId, 8);
   // Drop the just-added current user turn from the history window (it's the
   // question we send last).
@@ -382,7 +440,11 @@ export async function chatRag(
     .filter((m) => m.messageText !== query || m.role !== "user")
     .slice(-8)
     .map((m) => ({ role: m.role, content: m.messageText }));
+  endHistory(`${history.length} recent turn(s)`);
 
+  const endRecall = stepTimer(
+    "Recall relevant past turns (semantic + keyword memory)"
+  );
   let recalled: RecalledMessage[] = [];
   try {
     recalled = await recallMemory(query, 5, {
@@ -395,8 +457,14 @@ export async function chatRag(
   } catch {
     recalled = [];
   }
+  endRecall(
+    `${recalled.length} recalled${
+      opts.recallFromAllConversations ? " (all conversations)" : ""
+    }`
+  );
 
   // 3. Corpus retrieval (same version/policy/correction-aware path as runRag).
+  const endRetrieve = stepTimer("Retrieve grounding from document corpus");
   let mode: RetrievalMode;
   let hits: SearchHit[];
   let appliedCorrections: AppliedCorrections | null = null;
@@ -426,8 +494,10 @@ export async function chatRag(
     traceId = r.traceId;
     mode = "hybrid";
   }
+  endRetrieve(`${mode} · ${hits.length} source chunk(s)`);
 
   // 4. Generate with dialogue history + recalled memory.
+  const endGen = stepTimer("Generate grounded answer (LLM)");
   let answer: string;
   let llmUsed = false;
   if (hasLLM()) {
@@ -445,11 +515,16 @@ export async function chatRag(
   } else {
     answer = extractiveAnswer(query, hits);
   }
+  endGen(llmUsed ? env.llmModel : "extractive (no LLM)");
 
   // 5. Persist the assistant turn (embedded, with its grounding docIds).
+  const endPersistAssistant = stepTimer(
+    "Store assistant turn in memory (embedded)"
+  );
   await appendMessage(conversationId, "assistant", answer, {
     sourceDocIds: hits.map((h) => h.docId),
   });
+  endPersistAssistant();
 
   return {
     answer,
@@ -462,5 +537,6 @@ export async function chatRag(
     traceId,
     conversationId,
     recalled,
+    steps,
   };
 }

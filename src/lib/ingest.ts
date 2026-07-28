@@ -50,6 +50,10 @@ export interface IngestInput {
   versionGroupId?: string;
   effectiveFrom?: string;
   relatedDocumentIds?: string[];
+  /** Re-index in place: reuse this documentId instead of generating a new one. */
+  documentId?: string;
+  /** Re-index: reuse an already-stored GridFS original (skip re-upload). */
+  existingOriginalFileId?: string;
 }
 
 export interface IngestResult {
@@ -76,7 +80,8 @@ function preview(text: string, n = 600): string {
 export async function ingestFile(input: IngestInput): Promise<IngestResult> {
   const now = new Date().toISOString();
   const baseTitle = input.title || input.fileName.replace(/\.[^.]+$/, "");
-  const documentId = `DOC-${Date.now()}-${slugify(baseTitle)}`;
+  const documentId =
+    input.documentId || `DOC-${Date.now()}-${slugify(baseTitle)}`;
   const jobId = `JOB-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
   const steps: IngestionJob["steps"] = [];
@@ -138,22 +143,27 @@ export async function ingestFile(input: IngestInput): Promise<IngestResult> {
 
   // --- 3b. store the ORIGINAL file in GridFS (for content preview) ---
   const endStore = stepTimer("store_original");
-  let originalFileId: string | undefined;
-  try {
-    const bucket = await getFileBucket();
-    originalFileId = await new Promise<string>((resolve, reject) => {
-      const stream = bucket.openUploadStream(input.fileName, {
-        contentType: input.mimeType,
-        metadata: { documentId, fileType, uploadedAt: now },
+  let originalFileId: string | undefined = input.existingOriginalFileId;
+  if (originalFileId) {
+    // Re-index: the original is already in GridFS — reuse it.
+    endStore("ok", "reused existing original (re-index)");
+  } else {
+    try {
+      const bucket = await getFileBucket();
+      originalFileId = await new Promise<string>((resolve, reject) => {
+        const stream = bucket.openUploadStream(input.fileName, {
+          contentType: input.mimeType,
+          metadata: { documentId, fileType, uploadedAt: now },
+        });
+        Readable.from(input.buffer)
+          .pipe(stream)
+          .on("error", reject)
+          .on("finish", () => resolve(stream.id.toString()));
       });
-      Readable.from(input.buffer)
-        .pipe(stream)
-        .on("error", reject)
-        .on("finish", () => resolve(stream.id.toString()));
-    });
-    endStore("ok", `GridFS ${(input.buffer.length / 1024).toFixed(0)} KB`);
-  } catch (e) {
-    endStore("error", (e as Error).message);
+      endStore("ok", `GridFS ${(input.buffer.length / 1024).toFixed(0)} KB`);
+    } catch (e) {
+      endStore("error", (e as Error).message);
+    }
   }
 
   // --- 4. documents record ---
@@ -430,4 +440,58 @@ export async function deleteDocument(documentId: string): Promise<void> {
   await deleteOriginalFile(doc?.originalFileId);
   await chunksCol.deleteMany({ documentId });
   await docsCol.deleteOne({ documentId });
+}
+
+/**
+ * Re-extract + re-embed an existing document IN PLACE from its stored GridFS
+ * original, using the CURRENT extraction config (e.g. a better OCR engine).
+ * Fixes stale documents ingested with a weaker OCR pass. Reuses the same
+ * documentId and original file; rebuilds chunks + embeddings.
+ */
+export async function reindexDocument(
+  documentId: string
+): Promise<IngestResult> {
+  const docsCol = await getDocumentsCollection();
+  const doc = await docsCol.findOne({ documentId });
+  if (!doc) throw new Error(`document ${documentId} not found`);
+  if (!doc.originalFileId) {
+    throw new Error(
+      `document ${documentId} has no stored original file to re-index`
+    );
+  }
+
+  // Pull the original bytes back from GridFS.
+  const { ObjectId } = await import("mongodb");
+  const bucket = await getFileBucket();
+  const chunks: Buffer[] = [];
+  await new Promise<void>((resolve, reject) => {
+    bucket
+      .openDownloadStream(new ObjectId(doc.originalFileId as string))
+      .on("data", (c: Buffer) => chunks.push(c))
+      .on("error", reject)
+      .on("end", () => resolve());
+  });
+  const buffer = Buffer.concat(chunks);
+
+  // Re-run the full pipeline in place, preserving id, metadata and original.
+  return ingestFile({
+    buffer,
+    fileName: doc.sourceFileName,
+    mimeType: doc.mimeType,
+    title: doc.title,
+    docType: doc.docType,
+    propertyName: doc.propertyName,
+    segment: doc.segment,
+    region: doc.region,
+    language: doc.language,
+    audience: doc.audience,
+    tags: doc.tags,
+    exactTerms: doc.exactTerms,
+    versionLabel: doc.versionLabel,
+    versionGroupId: doc.versionGroupId,
+    effectiveFrom: doc.effectiveFrom,
+    relatedDocumentIds: doc.relatedDocumentIds,
+    documentId: doc.documentId,
+    existingOriginalFileId: doc.originalFileId,
+  });
 }

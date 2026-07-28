@@ -10,6 +10,7 @@ import { FilePreviewDialog, PreviewTarget } from "@/components/FilePreview";
 import { ChatTab } from "@/components/ChatTab";
 import { SignaturesTab } from "@/components/SignaturesTab";
 import { useI18n } from "@/lib/i18n";
+import { renderAnswer } from "@/lib/renderAnswer";
 
 interface MongoFeature {
   name: string;
@@ -45,6 +46,7 @@ interface ModeResult {
   ms: number;
   hits: Hit[];
   explain?: ModeExplain;
+  models?: { role: string; name: string }[];
   appliedCorrections?: AppliedCorrections | null;
   expandedAliases?: string[];
   matchedProperties?: string[];
@@ -57,6 +59,7 @@ interface RagResponse {
   llmUsed: boolean;
   sources: Hit[];
   explain?: ModeExplain;
+  models?: { role: string; name: string }[];
   appliedCorrections?: AppliedCorrections | null;
   expandedAliases?: string[];
 }
@@ -133,20 +136,6 @@ const MODEL_META = {
 } as const;
 
 const MODEL_MODES = ["vector-primary", "vector-multimodal"] as const;
-
-function renderAnswer(text: string) {
-  // Turn [DOC-ID] into highlighted citations.
-  const parts = text.split(/(\[[A-Z0-9-]+\])/g);
-  return parts.map((p, i) =>
-    /^\[[A-Z0-9-]+\]$/.test(p) ? (
-      <span className="cite" key={i}>
-        {p}
-      </span>
-    ) : (
-      <span key={i}>{p}</span>
-    )
-  );
-}
 
 export default function Home() {
   const { t, lang, setLang } = useI18n();
@@ -670,6 +659,19 @@ export default function Home() {
                   </span>
                 </div>
                 <div className="mode-sub">{t(`${meta.key}.sub`)}</div>
+                {!!r?.models?.length && (
+                  <div className="mode-models">
+                    <span className="mode-models-label">
+                      {t("common.modelsUsed")}
+                    </span>
+                    {r.models.map((mo, j) => (
+                      <span className="model-chip" key={j}>
+                        <span className="model-role">{mo.role}</span>
+                        {mo.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <div className="mode-body">
                   {!results && !loading && (
                     <div className="empty">{t("common.runToCompare")}</div>
@@ -700,6 +702,7 @@ export default function Home() {
                     <ResultCard
                       hit={h}
                       onPreview={setPreviewTarget}
+                      query={query}
                       key={`${h.docId}#${h.chunkIndex}`}
                     />
                   ))}
@@ -744,6 +747,19 @@ export default function Home() {
                   </span>
                 </div>
                 <div className="mode-sub">{t(`${meta.key}.sub`)}</div>
+                {!!r?.models?.length && (
+                  <div className="mode-models">
+                    <span className="mode-models-label">
+                      {t("common.modelsUsed")}
+                    </span>
+                    {r.models.map((mo, j) => (
+                      <span className="model-chip" key={j}>
+                        <span className="model-role">{mo.role}</span>
+                        {mo.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <div className="mode-body">
                   {!modelResults && !loading && (
                     <div className="empty">{t("modelcmp.runToCompare")}</div>
@@ -757,6 +773,7 @@ export default function Home() {
                     <ResultCard
                       hit={h}
                       onPreview={setPreviewTarget}
+                      query={query}
                       key={`${h.docId}#${h.chunkIndex}`}
                     />
                   ))}
@@ -798,6 +815,19 @@ export default function Home() {
                     </button>
                   )}
                 </h3>
+                {!!rag.models?.length && (
+                  <div className="mode-models">
+                    <span className="mode-models-label">
+                      {t("common.modelsUsed")}
+                    </span>
+                    {rag.models.map((mo, j) => (
+                      <span className="model-chip" key={j}>
+                        <span className="model-role">{mo.role}</span>
+                        {mo.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <div className="text">{renderAnswer(rag.answer)}</div>
                 {(rag.expandedAliases?.length ||
                   rag.appliedCorrections?.applied?.length) && (
@@ -838,6 +868,7 @@ export default function Home() {
                   <ResultCard
                     hit={h}
                     onPreview={setPreviewTarget}
+                      query={query}
                     key={`${h.docId}#${h.chunkIndex}`}
                   />
                 ))}

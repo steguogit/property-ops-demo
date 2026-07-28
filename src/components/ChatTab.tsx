@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { ResultCard, Hit } from "./ResultCard";
 import { FilePreviewDialog, PreviewTarget } from "./FilePreview";
 import { useI18n } from "@/lib/i18n";
+import { renderAnswer } from "@/lib/renderAnswer";
 
 interface ConversationSummary {
   conversationId: string;
@@ -23,6 +24,15 @@ interface Recalled {
   via: string;
 }
 
+interface ChatModel {
+  role: string;
+  name: string;
+}
+interface ChatStep {
+  step: string;
+  ms: number;
+  note?: string;
+}
 interface ChatMessage {
   role: "user" | "assistant";
   messageText: string;
@@ -32,20 +42,11 @@ interface ChatMessage {
   recalled?: Recalled[];
   llmUsed?: boolean;
   mode?: string;
+  models?: ChatModel[];
+  steps?: ChatStep[];
+  /** The user question this answer responded to (for keyword highlighting). */
+  query?: string;
   pending?: boolean;
-}
-
-function renderAnswer(text: string) {
-  const parts = text.split(/(\[[A-Z0-9-]+\])/g);
-  return parts.map((p, i) =>
-    /^\[[A-Z0-9-]+\]$/.test(p) ? (
-      <span className="cite" key={i}>
-        {p}
-      </span>
-    ) : (
-      <span key={i}>{p}</span>
-    )
-  );
 }
 
 export function ChatTab() {
@@ -224,6 +225,9 @@ export function ChatTab() {
                 recalled: data.recalled ?? [],
                 llmUsed: data.llmUsed,
                 mode: data.mode,
+                models: data.models ?? [],
+                steps: data.steps ?? [],
+                query: q,
               };
               break;
             }
@@ -309,9 +313,41 @@ export function ChatTab() {
                   m.messageText
                 )}
 
-                {/* Assistant extras: recalled memory + sources */}
+                {/* Assistant extras: models, steps, recalled memory + sources */}
                 {m.role === "assistant" && !m.pending && (
                   <>
+                    {!!m.models?.length && (
+                      <div className="chat-models">
+                        {m.models.map((mo, j) => (
+                          <span className="chat-model-chip" key={j}>
+                            <span className="chat-model-role">{mo.role}</span>
+                            {mo.name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {!!m.steps?.length && (
+                      <details className="chat-steps">
+                        <summary className="chat-steps-head">
+                          ⚙ {t("chat.steps", { n: m.steps.length })}
+                        </summary>
+                        <div className="chat-steps-body">
+                          {m.steps.map((s, j) => (
+                            <div className="chat-step-item" key={j}>
+                              <span className="chat-step-dot" />
+                              <span className="chat-step-name">{s.step}</span>
+                              <span className="chat-step-ms">{s.ms} ms</span>
+                              {s.note && (
+                                <span className="chat-step-note">
+                                  {" "}
+                                  — {s.note}
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
                     {!!m.recalled?.length && (
                       <details className="chat-recalled">
                         <summary className="chat-recalled-head">
@@ -341,6 +377,7 @@ export function ChatTab() {
                             <ResultCard
                               hit={h}
                               onPreview={setPreviewTarget}
+                              query={m.query}
                               key={`${h.docId}#${h.chunkIndex}`}
                             />
                           ))}

@@ -326,6 +326,7 @@ export const DICT: Dict = {
     zh: "輸入追問…（⌘/Ctrl+Enter 傳送）",
   },
   "chat.send": { en: "Send", zh: "傳送" },
+  "chat.steps": { en: "Pipeline steps ({n})", zh: "處理步驟（{n}）" },
   "chat.recalledMemory": {
     en: "Memory · {n} recalled",
     zh: "記憶 · 喚回 {n} 則",
@@ -411,6 +412,7 @@ export const DICT: Dict = {
   "common.loading": { en: "Loading…", zh: "載入中…" },
   "common.showQuery": { en: "</> Show query", zh: "</> 顯示查詢" },
   "common.ms": { en: "{n} ms", zh: "{n} 毫秒" },
+  "common.modelsUsed": { en: "Models:", zh: "使用模型：" },
   "common.close": { en: "Close", zh: "關閉" },
   "common.cancel": { en: "Cancel", zh: "取消" },
   "common.download": { en: "Download", zh: "下載" },
@@ -574,6 +576,21 @@ export const DICT: Dict = {
     en: "Delete this document and all of its backend data",
     zh: "刪除此文件及其所有後端資料",
   },
+  "docs.reindex": { en: "Re-OCR", zh: "重新識別" },
+  "docs.reindexing": { en: "Re-OCR…", zh: "重新識別中…" },
+  "docs.reindexTitle": {
+    en: "Re-extract text + re-embed from the original using the current OCR engine (fixes stale/low-quality extractions)",
+    zh: "以目前的 OCR 引擎從原始檔重新擷取文字並重新嵌入（修正舊有或低品質的識別結果）",
+  },
+  "docs.reindexConfirm": {
+    en: "Re-OCR and re-embed {label} from the original file using the current OCR engine? This replaces the existing extracted text and embeddings.",
+    zh: "以目前的 OCR 引擎從原始檔重新識別並重新嵌入 {label}？這會取代現有的擷取文字與嵌入。",
+  },
+  "docs.reindexed": {
+    en: "Re-indexed {label} — {method}, {chunks} chunks.",
+    zh: "已重新索引 {label} — {method}，{chunks} 個片段。",
+  },
+  "docs.reindexFailed": { en: "Re-index failed.", zh: "重新索引失敗。" },
   "docs.deleteConfirm": {
     en: 'Delete {label}?\n\nThis permanently removes the document, all of its chunks, and the stored original file from the backend. This cannot be undone.',
     zh: "刪除 {label}？\n\n此操作會永久移除該文件、其所有片段，以及後端儲存的原始檔案，且無法復原。",

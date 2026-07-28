@@ -1317,6 +1317,48 @@ a {
   color: var(--blue);
   font-style: normal;
 }
+/* Citation chips [DOC-ID p.N] in grounded answers. */
+.cite {
+  display: inline;
+  padding: 0 3px;
+  border-radius: 4px;
+  background: rgba(80, 140, 255, 0.12);
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.9em;
+  white-space: nowrap;
+}
+/* Rendered-answer blocks (renderAnswer). Override pre-wrap for block layout. */
+.text .answer-line {
+  white-space: pre-wrap;
+}
+.text .answer-gap {
+  height: 8px;
+}
+/* Calculation / breakdown tables in RAG answers. */
+.answer-table-wrap {
+  overflow-x: auto;
+  margin: 8px 0;
+}
+.answer-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+.answer-table th,
+.answer-table td {
+  border: 1px solid var(--border);
+  padding: 5px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+.answer-table th {
+  background: var(--panel-2, rgba(255, 255, 255, 0.04));
+  font-weight: 700;
+}
+.answer-table tr:last-child td {
+  border-top: 2px solid var(--border);
+  font-weight: 600;
+}
 .sources-title {
   font-size: 12px;
   color: var(--text-dim);
@@ -1347,10 +1389,111 @@ a {
   text-align: center;
 }
 mark {
-  background: rgba(0, 237, 100, 0.22);
+  /* Soft highlight = query keywords (works even for pure vector search). */
+  background: rgba(80, 140, 255, 0.18);
   color: var(--text);
   border-radius: 3px;
   padding: 0 2px;
+}
+mark.hl-strong {
+  /* Strong highlight = exact lexical/alias matches. */
+  background: rgba(0, 237, 100, 0.28);
+}
+
+/* ---------- Models-used chips (Compare + RAG) ---------- */
+.mode-models,
+.chat-models {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  font-size: 11px;
+}
+.chat-models {
+  padding: 6px 0 0;
+  margin-top: 6px;
+}
+.mode-models-label {
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-size: 10px;
+}
+.model-chip,
+.chat-model-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--bg-soft, rgba(255, 255, 255, 0.03));
+  font-size: 11px;
+  white-space: nowrap;
+}
+.model-role,
+.chat-model-role {
+  color: var(--text-faint);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+/* ---------- Conversation pipeline steps (collapsible) ---------- */
+.chat-steps {
+  margin-top: 8px;
+}
+.chat-steps-head {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-faint);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.chat-steps-head::-webkit-details-marker {
+  display: none;
+}
+.chat-steps-head::before {
+  content: "▸ ";
+}
+.chat-steps[open] .chat-steps-head::before {
+  content: "▾ ";
+}
+.chat-steps-body {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+}
+.chat-step-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11.5px;
+  padding: 3px 0;
+}
+.chat-step-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  flex-shrink: 0;
+  align-self: center;
+}
+.chat-step-name {
+  color: var(--text);
+}
+.chat-step-ms {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.chat-step-note {
+  color: var(--text-faint);
 }
 
 /* ---------- Small inline action buttons (mode header) ---------- */

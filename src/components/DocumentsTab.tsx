@@ -63,6 +63,7 @@ export function DocumentsTab() {
     null
   );
   const [drag, setDrag] = useState(false);
+  const [reindexingId, setReindexingId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
 
@@ -157,6 +158,43 @@ export function DocumentsTab() {
       const res = await fetch(`/api/documents/${documentId}`);
       const data = await res.json();
       setSelected(data.document);
+    }
+  }
+
+  async function reindex(documentId: string, title?: string) {
+    const label = title ? `"${title}"` : documentId;
+    if (!window.confirm(t("docs.reindexConfirm", { label }))) return;
+    setReindexingId(documentId);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/documents/${documentId}/reindex`, {
+        method: "POST",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) {
+        setNotice({
+          kind: "warn",
+          text: data.error || t("docs.reindexFailed"),
+        });
+        return;
+      }
+      setNotice({
+        kind: "info",
+        text: t("docs.reindexed", {
+          label,
+          method: data.document?.extractionMethod ?? "",
+          chunks: data.chunkCount ?? 0,
+        }),
+      });
+      await load();
+      if (selected?.documentId === documentId) {
+        const r = await fetch(`/api/documents/${documentId}`);
+        setSelected((await r.json()).document);
+      }
+    } catch (e) {
+      setNotice({ kind: "warn", text: (e as Error).message });
+    } finally {
+      setReindexingId(null);
     }
   }
 
@@ -425,6 +463,22 @@ export function DocumentsTab() {
                           title={t("docs.preview")}
                         >
                           {t("docs.preview")}
+                        </button>
+                      )}
+                      {d.originalFileId && (
+                        <button
+                          className="btn sm"
+                          onClick={() => reindex(d.documentId, d.title)}
+                          disabled={reindexingId === d.documentId}
+                          title={t("docs.reindexTitle")}
+                        >
+                          {reindexingId === d.documentId ? (
+                            <>
+                              <span className="loading" /> {t("docs.reindexing")}
+                            </>
+                          ) : (
+                            t("docs.reindex")
+                          )}
                         </button>
                       )}
                       <button

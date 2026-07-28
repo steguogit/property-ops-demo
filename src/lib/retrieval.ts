@@ -48,6 +48,9 @@ export interface SearchHit {
   // ----- version / lifecycle / source (iteration 2) -----
   documentId?: string;
   sourceFileType?: string;
+  sourceFileName?: string;
+  /** For scanned-PDF page-image chunks: the 0-based page index. */
+  pageImageIndex?: number;
   versionLabel?: string;
   versionGroupId?: string;
   obsoleteFlag?: boolean;
@@ -84,6 +87,8 @@ const PROJECT = {
   updatedAt: 1,
   documentId: 1,
   sourceFileType: 1,
+  sourceFileName: 1,
+  pageImageIndex: 1,
   versionLabel: 1,
   versionGroupId: 1,
   obsoleteFlag: 1,
@@ -109,6 +114,8 @@ function toHit(doc: any, rank: number): SearchHit {
     updatedAt: doc.updatedAt,
     documentId: doc.documentId,
     sourceFileType: doc.sourceFileType,
+    sourceFileName: doc.sourceFileName,
+    pageImageIndex: doc.pageImageIndex,
     versionLabel: doc.versionLabel,
     versionGroupId: doc.versionGroupId,
     obsoleteFlag: doc.obsoleteFlag,

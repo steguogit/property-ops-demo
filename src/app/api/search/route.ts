@@ -5,6 +5,7 @@ import {
   EnhancedSearchOptions,
 } from "@/lib/retrieval";
 import { explainForMode } from "@/lib/explain";
+import { modelsForMode } from "@/lib/models";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -58,6 +59,7 @@ export async function POST(req: NextRequest) {
             ms: Date.now() - t0,
             hits: r.hits,
             explain,
+            models: modelsForMode(mode as any),
             appliedCorrections: r.appliedCorrections,
             expandedAliases: r.expandedAliases,
             matchedProperties: r.matchedProperties,
@@ -71,6 +73,7 @@ export async function POST(req: NextRequest) {
             ms: Date.now() - t0,
             hits: [],
             explain,
+            models: modelsForMode(mode as any),
             appliedCorrections: null,
             expandedAliases: [],
             matchedProperties: [],
