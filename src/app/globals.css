@@ -368,26 +368,118 @@ a {
   font-size: 12.5px;
   font-weight: 600;
   line-height: 1.35;
-  padding-right: 16px;
+  padding-right: 40px;
 }
 .chat-conv-meta {
   font-size: 11px;
   color: var(--text-faint);
   margin-top: 3px;
 }
-.chat-conv-del {
+/* Conversation search box */
+.chat-conv-search {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12.5px;
+}
+.chat-conv-search:focus {
+  outline: none;
+  border-color: var(--green);
+}
+/* Inline rename field */
+.chat-conv-rename {
+  width: 100%;
+  padding: 3px 6px;
+  border: 1px solid var(--green);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.chat-conv-rename:focus {
+  outline: none;
+}
+/* Row actions (rename + delete) */
+.chat-conv-actions {
   position: absolute;
   top: 6px;
   right: 6px;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.chat-conv-item:hover .chat-conv-actions,
+.chat-conv-item.active .chat-conv-actions {
+  opacity: 1;
+}
+.chat-conv-btn {
   border: none;
   background: transparent;
   color: var(--text-faint);
-  font-size: 15px;
+  font-size: 13px;
   cursor: pointer;
   line-height: 1;
+  padding: 1px 3px;
 }
-.chat-conv-del:hover {
+.chat-conv-btn:hover {
+  color: var(--green);
+}
+.chat-conv-btn:last-child:hover {
   color: var(--red);
+}
+
+/* Live "thinking" panel (generation in progress) */
+.chat-thinking {
+  min-width: 240px;
+}
+.chat-thinking-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.chat-thinking-time {
+  font-size: 12px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.chat-thinking-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.chat-thinking-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.chat-thinking-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+  flex-shrink: 0;
+}
+.chat-thinking-step.done {
+  color: var(--text);
+}
+.chat-thinking-step.done .chat-thinking-dot {
+  background: var(--green);
+}
+.chat-thinking-step.active {
+  color: var(--green);
+  font-weight: 600;
+}
+.chat-thinking-step.active .chat-thinking-dot {
+  background: var(--green);
+  animation: sig-pulse 1s ease-in-out infinite;
 }
 .chat-main {
   display: flex;

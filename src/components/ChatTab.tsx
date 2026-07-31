@@ -9,9 +9,56 @@ import { renderAnswer } from "@/lib/renderAnswer";
 interface ConversationSummary {
   conversationId: string;
   title: string;
+  autoTitled?: boolean;
   messageCount: number;
   lastMessagePreview?: string;
   updatedAt: string;
+}
+
+/**
+ * Live "thinking" panel shown while the LLM generates. The /api/chat call is
+ * non-streaming, so we advance through the KNOWN pipeline phases on a timer with
+ * a running elapsed counter, so the wait shows what's happening instead of a
+ * bare spinner. The real per-step timings appear afterward in "Pipeline steps".
+ */
+function ChatThinking({ t }: { t: (k: string, v?: any) => string }) {
+  const [ms, setMs] = useState(0);
+  useEffect(() => {
+    const start = Date.now();
+    const id = setInterval(() => setMs(Date.now() - start), 150);
+    return () => clearInterval(id);
+  }, []);
+  const phases = [
+    { key: "chat.phase.store", at: 0 },
+    { key: "chat.phase.recall", at: 500 },
+    { key: "chat.phase.retrieve", at: 1200 },
+    { key: "chat.phase.generate", at: 2400 },
+  ];
+  let active = 0;
+  for (let i = 0; i < phases.length; i++) if (ms >= phases[i].at) active = i;
+  return (
+    <div className="chat-thinking">
+      <div className="chat-thinking-head">
+        <span className="loading" />
+        <span className="chat-thinking-time">
+          {t("sig.elapsed", { s: (ms / 1000).toFixed(1) })}
+        </span>
+      </div>
+      <div className="chat-thinking-steps">
+        {phases.map((p, i) => (
+          <div
+            key={p.key}
+            className={`chat-thinking-step ${
+              i < active ? "done" : i === active ? "active" : "pending"
+            }`}
+          >
+            <span className="chat-thinking-dot" />
+            {t(p.key)}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 interface Recalled {
@@ -60,6 +107,10 @@ export function ChatTab() {
   const [previewTarget, setPreviewTarget] = useState<PreviewTarget | null>(
     null
   );
+  const [convSearch, setConvSearch] = useState("");
+  // Inline rename state: which conversation is being renamed + the draft.
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   // Tracks which conversation the UI is currently showing, so an in-flight
   // send() can tell whether the user has switched away before it resolved.
@@ -69,9 +120,12 @@ export function ChatTab() {
   // LLM is still thinking re-shows the pending "thinking…" bubble.
   const pendingRef = useRef<{ convId: string; query: string } | null>(null);
 
-  async function loadConversations() {
+  async function loadConversations(search?: string) {
     try {
-      const res = await fetch("/api/conversations");
+      const q = (search ?? convSearch).trim();
+      const res = await fetch(
+        `/api/conversations${q ? `?q=${encodeURIComponent(q)}` : ""}`
+      );
       const data = await res.json();
       setConversations(data.conversations ?? []);
     } catch {
@@ -81,7 +135,15 @@ export function ChatTab() {
 
   useEffect(() => {
     loadConversations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Debounced search of the conversation list.
+  useEffect(() => {
+    const id = setTimeout(() => loadConversations(convSearch), 250);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [convSearch]);
 
   useEffect(() => {
     // Auto-scroll to the newest message.
@@ -166,6 +228,45 @@ export function ChatTab() {
     await loadConversations();
   }
 
+  function startRename(id: string, current: string) {
+    setRenamingId(id);
+    setRenameDraft(current);
+  }
+
+  async function commitRename() {
+    const id = renamingId;
+    const title = renameDraft.trim();
+    setRenamingId(null);
+    if (!id || !title) return;
+    // Optimistic update.
+    setConversations((cs) =>
+      cs.map((c) => (c.conversationId === id ? { ...c, title } : c))
+    );
+    try {
+      await fetch(`/api/conversations/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title }),
+      });
+    } catch {
+      /* ignore */
+    }
+    await loadConversations();
+  }
+
+  // Auto-title is generated server-side after the first turn (async), so poll
+  // the conversation list a few times until the topic title appears.
+  function pollForTitle(id: string) {
+    let tries = 0;
+    const timer = setInterval(async () => {
+      tries++;
+      await loadConversations();
+      const c = (await (await fetch(`/api/conversations/${id}`)).json())
+        ?.conversation;
+      if ((c && c.autoTitled) || tries >= 6) clearInterval(timer);
+    }, 2000);
+  }
+
   async function send() {
     const q = input.trim();
     if (!q || sending) return;
@@ -202,6 +303,10 @@ export function ChatTab() {
       if (!sendConvId && data.conversationId && activeConvRef.current === null) {
         activeConvRef.current = data.conversationId;
         setConversationId(data.conversationId);
+      }
+      // A topic title is generated async after the first turn — poll for it.
+      if (data.isNewConversation && resolvedConvId) {
+        pollForTitle(resolvedConvId);
       }
       // Now that we know the id, keep the in-flight marker accurate.
       if (resolvedConvId && pendingRef.current?.convId !== resolvedConvId) {
@@ -265,9 +370,19 @@ export function ChatTab() {
         <button className="btn primary chat-new" onClick={newConversation}>
           + {t("chat.newConversation")}
         </button>
+        <input
+          className="chat-conv-search"
+          value={convSearch}
+          placeholder={t("chat.searchConversations")}
+          onChange={(e) => setConvSearch(e.target.value)}
+        />
         <div className="chat-conv-list">
           {conversations.length === 0 && (
-            <div className="empty">{t("chat.noConversations")}</div>
+            <div className="empty">
+              {convSearch.trim()
+                ? t("chat.noMatches")
+                : t("chat.noConversations")}
+            </div>
           )}
           {conversations.map((c) => (
             <div
@@ -275,22 +390,52 @@ export function ChatTab() {
               className={`chat-conv-item ${
                 conversationId === c.conversationId ? "active" : ""
               }`}
-              onClick={() => openConversation(c.conversationId)}
+              onClick={() =>
+                renamingId !== c.conversationId &&
+                openConversation(c.conversationId)
+              }
             >
-              <div className="chat-conv-title">{c.title}</div>
+              {renamingId === c.conversationId ? (
+                <input
+                  className="chat-conv-rename"
+                  value={renameDraft}
+                  autoFocus
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => setRenameDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") commitRename();
+                    if (e.key === "Escape") setRenamingId(null);
+                  }}
+                  onBlur={commitRename}
+                />
+              ) : (
+                <div className="chat-conv-title">{c.title}</div>
+              )}
               <div className="chat-conv-meta">
                 {t("chat.turns", { n: c.messageCount })}
               </div>
-              <button
-                className="chat-conv-del"
-                title={t("common.delete")}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  removeConversation(c.conversationId);
-                }}
-              >
-                ×
-              </button>
+              <div className="chat-conv-actions">
+                <button
+                  className="chat-conv-btn"
+                  title={t("chat.rename")}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    startRename(c.conversationId, c.title);
+                  }}
+                >
+                  ✎
+                </button>
+                <button
+                  className="chat-conv-btn"
+                  title={t("common.delete")}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeConversation(c.conversationId);
+                  }}
+                >
+                  ×
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -306,7 +451,7 @@ export function ChatTab() {
             <div key={i} className={`chat-msg ${m.role}`}>
               <div className="chat-bubble">
                 {m.pending ? (
-                  <span className="loading" />
+                  <ChatThinking t={t} />
                 ) : m.role === "assistant" ? (
                   <div className="text">{renderAnswer(m.messageText)}</div>
                 ) : (

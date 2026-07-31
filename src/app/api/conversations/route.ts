@@ -1,11 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listConversations, createConversation } from "@/lib/memory";
+import {
+  listConversations,
+  createConversation,
+  searchConversations,
+} from "@/lib/memory";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const conversations = await listConversations();
+    const q = req.nextUrl.searchParams.get("q") ?? "";
+    const conversations = q.trim()
+      ? await searchConversations(q)
+      : await listConversations();
     return NextResponse.json({ conversations });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

@@ -316,7 +316,27 @@ export const DICT: Dict = {
   // ----- Chat / conversational RAG -----
   "chat.newConversation": { en: "New conversation", zh: "新對話" },
   "chat.noConversations": { en: "No conversations yet.", zh: "尚無對話。" },
+  "chat.noMatches": { en: "No matching conversations.", zh: "沒有符合的對話。" },
+  "chat.searchConversations": {
+    en: "Search conversations…",
+    zh: "搜尋對話…",
+  },
+  "chat.rename": { en: "Rename", zh: "重新命名" },
   "chat.turns": { en: "{n} turns", zh: "{n} 則訊息" },
+  // Live "thinking" phases while the answer is generated.
+  "chat.phase.store": { en: "Saving your turn to memory", zh: "將你的訊息存入記憶" },
+  "chat.phase.recall": {
+    en: "Recalling relevant past turns",
+    zh: "喚回相關的過往內容",
+  },
+  "chat.phase.retrieve": {
+    en: "Retrieving grounding from documents",
+    zh: "從文件檢索依據",
+  },
+  "chat.phase.generate": {
+    en: "Generating grounded answer",
+    zh: "生成有依據的回覆",
+  },
   "chat.empty": {
     en: "Start a conversation. Ask a question, then keep asking follow-ups — the assistant remembers the thread and recalls relevant earlier turns from memory.",
     zh: "開始對話。先問一個問題，再繼續追問 — 助理會記住對話脈絡，並從記憶中喚回相關的過往內容。",

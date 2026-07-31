@@ -494,6 +494,9 @@ export interface ConversationDoc {
   _id?: string;
   conversationId: string;
   title: string;
+  /** True once a topic title was auto-generated (so we don't overwrite a
+   *  human-renamed title). */
+  autoTitled?: boolean;
   /** Optional owner/tenant scoping (single-tenant demo defaults). */
   userId?: string;
   tenantId?: string;

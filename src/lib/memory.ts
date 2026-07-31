@@ -5,7 +5,7 @@ import {
   ConversationDoc,
   ConversationMessageDoc,
 } from "./mongo";
-import { env, isAtlasEmbedding, hasVoyage } from "./env";
+import { env, isAtlasEmbedding, hasVoyage, hasLLM } from "./env";
 import { voyageEmbed, voyageEmbedOne } from "./voyage";
 
 // ---------------------------------------------------------------------------
@@ -78,6 +78,127 @@ export async function deleteConversation(conversationId: string): Promise<void> 
   const msgCol = await getConversationMessagesCollection();
   await msgCol.deleteMany({ conversationId });
   await convCol.deleteOne({ conversationId });
+}
+
+/** Rename a conversation (marks it as human-titled so auto-title won't overwrite). */
+export async function renameConversation(
+  conversationId: string,
+  title: string
+): Promise<void> {
+  const col = await getConversationsCollection();
+  await col.updateOne(
+    { conversationId },
+    {
+      $set: {
+        title: title.trim() || "Untitled",
+        autoTitled: false,
+        updatedAt: new Date().toISOString(),
+      },
+    }
+  );
+}
+
+/**
+ * Search conversations by title / last-message-preview keyword (case-insensitive
+ * substring). Simple, deterministic, and CJK-friendly.
+ */
+export async function searchConversations(
+  q: string,
+  limit = 50
+): Promise<ConversationDoc[]> {
+  const col = await getConversationsCollection();
+  const term = q.trim();
+  if (!term) return listConversations(limit);
+  const rx = new RegExp(
+    term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+    "i"
+  );
+  return col
+    .find({ $or: [{ title: rx }, { lastMessagePreview: rx }] })
+    .sort({ updatedAt: -1 })
+    .limit(limit)
+    .toArray();
+}
+
+/**
+ * Auto-generate a short topic title from the conversation's content using the
+ * LLM. Best-effort: skips if no LLM, if the user already renamed it, or on any
+ * error. Falls back to a truncated first user message.
+ */
+export async function generateConversationTitle(
+  conversationId: string
+): Promise<void> {
+  const convCol = await getConversationsCollection();
+  const conv = await convCol.findOne({ conversationId });
+  if (!conv) return;
+  // Never overwrite a human-set title.
+  if (conv.autoTitled === false && conv.title && conv.title !== "New conversation")
+    return;
+
+  const msgs = await getMessages(conversationId);
+  if (!msgs.length) return;
+  const firstUser =
+    msgs.find((m) => m.role === "user")?.messageText ?? msgs[0].messageText;
+
+  let title = "";
+  if (hasLLM()) {
+    try {
+      const transcript = msgs
+        .slice(0, 6)
+        .map((m) => `${m.role}: ${m.messageText}`)
+        .join("\n")
+        .slice(0, 2000);
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (env.llmAuthHeader === "api-key") headers["api-key"] = env.llmApiKey;
+      else headers["Authorization"] = `Bearer ${env.llmApiKey}`;
+      const res = await fetch(`${env.llmBaseUrl}/chat/completions`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          model: env.llmModel,
+          messages: [
+            {
+              role: "system",
+              content:
+                "Generate a concise topic title (3-6 words, no quotes, no trailing punctuation) for this conversation. " +
+                "Match the primary language of the conversation (English or Chinese). Output ONLY the title.",
+            },
+            { role: "user", content: transcript },
+          ],
+        }),
+      });
+      if (res.ok) {
+        const json = (await res.json()) as {
+          choices: { message: { content: string } }[];
+        };
+        title = (json.choices?.[0]?.message?.content ?? "")
+          .trim()
+          .replace(/^["'「」]+|["'「」]+$/g, "")
+          .replace(/[.。!！?？]+$/g, "")
+          .slice(0, 80);
+      }
+    } catch {
+      /* fall through to heuristic */
+    }
+  }
+  if (!title) {
+    title = firstUser.replace(/\s+/g, " ").trim().slice(0, 48);
+    if (firstUser.length > 48) title += "…";
+  }
+  if (!title) return;
+
+  await convCol.updateOne(
+    { conversationId },
+    {
+      $set: {
+        title,
+        autoTitled: true,
+        updatedAt: new Date().toISOString(),
+      },
+    }
+  );
 }
 
 /** Full ordered transcript of a conversation. */
