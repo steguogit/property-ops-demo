@@ -58,8 +58,8 @@ interface CompareResp {
 }
 
 const PRESETS = [
+  "杭州市西湖区文一西路2002号翠湖花园6栋0803",
   "杭州市西湖区文一西路2002号翠湖花园6栋801",
-  "翠湖花园6栋801",
   "深圳万科城1A座8楼0801",
   "上海中海国际3B栋51层",
 ];
@@ -162,15 +162,15 @@ function scoreInfo(
       };
     case "floor-rankfusion":
       return {
-        title: "$rankFusion + Floor · RRF 融合分",
+        title: "Hybrid + 樓層/單元置頂 · 顯示的是 hybrid RRF 分",
         source:
-          "來源：$rankFusion 輸出的 { $meta: \"score\" }（RRF 分），輸入為 向量+詞法+樓層+單元 四條檢索通路。",
+          "顯示分數 = 底層 hybrid（$rankFusion 向量+詞法）的 { $meta: \"score\" }（RRF 分）。樓層/單元置頂只是應用層的穩定分組，不改變分數本身。",
         formula:
-          "score(d) = Σ_通路  weightᵢ × 1 / (60 + rankᵢ(d))   （unitExact 權重 2，其餘 1）",
+          "排序 = 先按樓層/單元分層（tier 0/1/2），層內按 hybrid RRF 分（穩定排序）。無加分數字。",
         detail:
-          "同樣是官方 RRF，但多了樓層精確通路、單元精確通路兩條用結構化欄位精確過濾的通路。同樓層／目標單元文檔因多出現在這兩條通路而多得票，RRF 分被顯著抬高。",
+          "大廈由 hybrid（向量語義 + 詞法）理解——不匹配大廈名、不用 regex、多語言通用。之後只在 hybrid 候選集之上，把 floor_num==查詢樓層（且 unit==查詢單元）的文檔穩定置頂；組內保留 hybrid 原排名。顯示的分數即 hybrid RRF 分。",
         parts: [
-          { label: "RRF score（= 顯示分數）", value: s },
+          { label: "hybrid RRF score（= 顯示分數）", value: s },
           { label: "向量檢索通路 · vectorSearchScore（餘弦）", value: v },
           { label: "詞法檢索通路 · searchScore（BM25）", value: l },
         ],
@@ -596,225 +596,122 @@ export default function FloorLab() {
         )}
       </Modal>
 
-      {/* ---- $rankFusion + Floor ranking logic dialog (MongoDB-native) ---- */}
+      {/* ---- Hybrid + floor/unit regroup logic dialog ---- */}
       <Modal
         open={floorLogicOpen}
         onClose={() => setFloorLogicOpen(false)}
-        title="$rankFusion + Floor 樓層處理邏輯"
-        subtitle="用 MongoDB 原生 RRF（無 magic number）修復樓層亂序"
+        title="Hybrid + 樓層/單元置頂 處理邏輯"
+        subtitle="樓層/單元只是「hybrid 候選集之上」的再排序——不匹配大廈名、多語言通用"
       >
         <div className="explain-section">
-          <h3>① 解析查詢 Parse</h3>
+          <h3>① 先跑標準 hybrid 檢索（大廈由此理解）</h3>
           <div className="explain-note">
-            從地址文本中提取目標 <b>樓層</b> 與 <b>單元號</b>，兼容多種寫法：
+            <code>$rankFusion</code> 融合<b>向量 + 詞法</b>兩條通路。
+            「翠湖花園」這種大廈／地址語義，<b>完全由 hybrid 理解</b>——
+            我們的程式碼<b>不匹配大廈名、不用 regex</b>，換其他 entity
+            或多語言地址一樣可用。hybrid 返回的候選集<b>已經是正確大廈</b>。
+          </div>
+        </div>
+        <div className="explain-section">
+          <h3>② 解析查詢 Parse</h3>
+          <div className="explain-note">
+            從查詢提取目標 <b>樓層</b> 與 <b>單元號</b>，兼容多種寫法：
             <br />
             <code>8樓 / 八樓 / 第8層 / 8F</code> ·{" "}
             <code>801室 / 801號 / 801單元 / 801</code>
             <br />
-            當前查詢解析結果：樓層{" "}
+            當前解析結果：樓層{" "}
             <b style={{ color: "var(--green)" }}>{data?.parsed?.floor ?? "?"}</b>
             ，單元{" "}
             <b style={{ color: "var(--green)" }}>{data?.parsed?.unit ?? "?"}</b>
           </div>
         </div>
         <div className="explain-section">
-          <h3>② $rankFusion 的四條檢索通路 Input pipelines</h3>
+          <h3>③ 在候選集之上分組置頂（純結構排序，無 magic number）</h3>
           <div className="feature-list">
             <div className="feature-item">
-              <div className="fname">向量檢索通路 · $vectorSearch（權重 1）</div>
-              <div className="fdetail">語義候選召回。</div>
-            </div>
-            <div className="feature-item">
-              <div className="fname">詞法檢索通路 · $search BM25（權重 1）</div>
-              <div className="fdetail">字面 ／ 精確詞召回。</div>
-            </div>
-            <div className="feature-item">
-              <div className="fname">
-                樓層精確通路 · $match(floor_num=查詢樓層) + $sort（權重 1）
-              </div>
+              <div className="fname">tier 0 · 精確樓層 + 精確單元</div>
               <div className="fdetail">
-                只包含同樓層文檔的檢索通路。這些文檔因多出現在一條通路，
-                獲得額外 RRF 票數 → 同樓層自然被抬到頂部。
+                floor_num == 查詢樓層 <b>且</b> unit == 查詢單元 → 目標房間，最前。
               </div>
             </div>
             <div className="feature-item">
-              <div className="fname">
-                單元精確通路 · $match(unit_code=查詢單元) + $sort（權重 2）
-              </div>
+              <div className="fname">tier 1 · 精確樓層</div>
               <div className="fdetail">
-                只包含目標單元的檢索通路，權重 2 → 被查詢單元本身排最前。
+                floor_num == 查詢樓層 → 同樓層鄰居，其次。
+              </div>
+            </div>
+            <div className="feature-item">
+              <div className="fname">tier 2 · 其餘</div>
+              <div className="fdetail">其他樓層 / 無樓層資訊，排最後。</div>
+            </div>
+            <div className="feature-item">
+              <div className="fname">組內 tie-break · hybrid 原排名（穩定排序）</div>
+              <div className="fdetail">
+                每層內部保留 hybrid 原順序（JS Array.sort 穩定排序）。
+                <b>沒有 +100/−10 之類加分數字，也沒有樓層距離運算</b>——
+                排序純粹靠離散層級。
               </div>
             </div>
           </div>
         </div>
         <div className="explain-section">
-          <h3>③ 融合方式 Fusion · 官方 RRF（weight 如何計算）</h3>
+          <h3>④ 為什麼這樣設計 Why</h3>
           <div className="explain-note">
-            <b>combination 不是獨立 operator</b>，而是 <code>$rankFusion</code>{" "}
-            的內部欄位。weight 的計算<b>完全由 MongoDB 引擎</b>按官方 Reciprocal
-            Rank Fusion 公式完成，我哋只係聲明各條通路的乘數：
+            大廈由 hybrid（向量語義 + 詞法）自己理解，<b>樓層/單元只是候選集之上的
+            再排序</b>，不參與檢索、不碰大廈名。這樣換成其他 entity
+            或多語言地址都能用。<br />
+            舊版把樓層/單元做成獨立 <code>$rankFusion</code> 通路（對全 collection
+            $match 同樓層/同單元）是錯的：它會投票給<b>其他大廈</b>的同樓層文檔，
+            令「翠湖花園」這種關鍵字被忽略（查 杭州翠湖花園0803 反而返回 上海中海國際）。
             <br />
-            <code style={{ display: "inline-block", margin: "6px 0" }}>
-              score(d) = Σ_通路  weightᵢ × 1 / (60 + rankᵢ(d))
-            </code>
-            <br />
-            <span style={{ color: "var(--text-dim)" }}>
-              rankᵢ(d) = 文檔 d 在第 i 條通路輸出中的名次；60 = MongoDB 固定敏感度常數；
-              weightᵢ = combination.weights 給該通路的數字。文檔若不在某條通路出現，該項不計。
-            </span>
-          </div>
-          <div className="feature-list" style={{ marginTop: 8 }}>
-            <div className="feature-item">
-              <div className="fname">實例：查「6栋801」時 801室（在全部四條通路）</div>
-              <div className="fdetail">
-                RRF ≈ (1 + 1 + 1 + <b>2</b>) / (60 + 1) = 5/61 ≈{" "}
-                <b style={{ color: "var(--green)" }}>0.082</b>
-                （unitExact 權重 2）
-              </div>
-            </div>
-            <div className="feature-item">
-              <div className="fname">對比：803室（不在單元精確通路）</div>
-              <div className="fdetail">
-                少了最重（權重 2）那一票 → RRF 分較低 → 被引擎排在 801 之後。
-                這就是 weight 的實際作用：只是公式中的乘數，
-                <b>沒有任何手寫加分邏輯</b>。
-              </div>
-            </div>
-          </div>
-        </div>
-        <div className="explain-section">
-          <h3>④ 為什麼需要這一步 Why</h3>
-          <div className="explain-note">
-            純 vector / hybrid 檢索只按語義分排序，而向量對「樓層數值」毫無認知：
-            1801 / 501 跟 query 801 的餘弦相似度，跟某些「寫法較遠的 8樓變體」
-            差不多、甚至更高。於是部分非 8樓文檔的分數<b>高過</b>部分 8樓文檔，
-            排序倒序後就出現「8樓、5樓、8樓」相間（排序本身正確，問題在輸入信號）。
-            額外的樓層、單元兩條檢索通路用結構化 <code>floor_num</code> /{" "}
-            <code>unit_code</code> 精確過濾，多給同樓層文檔一票，
-            <b> 無需重建任何索引</b>，即可修復亂序。要求 MongoDB 8.0+；
-            升級 8.2 可用 <code>$score</code> 表達式，8.3 可用{" "}
-            <code>$scoreFusion</code>。
+            單元號有補零（0803）與不補零（803）兩種寫法，比較時做正規化（去前導零），
+            屬<b>資料正規化</b>、非排序權重。
           </div>
         </div>
       </Modal>
 
-      {/* ---- Why $rankFusion+Floor beats Baseline Hybrid dialog ---- */}
+      {/* ---- Why hybrid + regroup is better dialog ---- */}
       <Modal
         open={whyBetterOpen}
         onClose={() => setWhyBetterOpen(false)}
         title="為何比 Baseline · Hybrid 更準？"
-        subtitle="同一個 $rankFusion / RRF —— 差別在於「餵咩檢索通路入去」"
+        subtitle="同樣的 hybrid 檢索 —— 差別只在候選集之上多做一步樓層/單元置頂"
       >
         <div className="explain-section">
-          <h3>① 關鍵：兩者用的是同一個 RRF</h3>
+          <h3>① 兩者的檢索完全相同</h3>
           <div className="explain-note">
-            <b>不是「RRF 更準」</b>。Baseline · Hybrid 同 $rankFusion + Floor
-            都係用 MongoDB 同一個 <code>$rankFusion</code> stage、同一條 RRF
-            公式。差別只在於<b>輸入了哪些檢索通路</b>——即「餵咩信號俾 RRF」。
+            本欄與 Baseline · Hybrid <b>用同一個 hybrid 檢索</b>（$rankFusion
+            融合向量 + 詞法），候選集一模一樣、大廈都正確。差別只在於：本欄在
+            <b>候選集之上多做一步樓層/單元分組置頂</b>。
           </div>
         </div>
         <div className="explain-section">
-          <h3>② Baseline · Hybrid 的兩條通路都「不識樓層」</h3>
-          <div className="feature-list">
-            <div className="feature-item">
-              <div className="fname">向量檢索通路 · 語義相似度</div>
-              <div className="fdetail">
-                向量對「樓層數值」毫無認知：1801 / 501 跟 query 801 的餘弦相似度，
-                跟某些寫法較遠的 8樓變體差不多、甚至更高 → 部分非 8樓文檔的分數
-                會高過部分 8樓文檔。
-              </div>
-            </div>
-            <div className="feature-item">
-              <div className="fname">詞法檢索通路 · BM25 字面</div>
-              <div className="fdetail">
-                「翠湖花园6栋」等共同詞在 5/8/18 樓文檔都出現 →
-                詞法檢索通路給它們差不多的名次，同樣沒有樓層信號。
-              </div>
-            </div>
-            <div className="feature-item">
-              <div className="fname">結果：garbage in, garbage out</div>
-              <div className="fdetail">
-                兩條通路都沒有樓層信號，RRF 只是忠實地按分數倒序融合（排序無錯）
-                → 那些分數偏高的 5 樓 / 18 樓文檔就插進 8 樓群。融合演算法再好，
-                輸入信號沒有樓層，也救不回。
-              </div>
-            </div>
-          </div>
-        </div>
-        <div className="explain-section">
-          <h3>③ $rankFusion + Floor 多了兩條「識樓層」的檢索通路</h3>
+          <h3>② Baseline · Hybrid 為何會樓層亂序</h3>
           <div className="explain-note">
-            樓層精確通路 = <code>$match(&#123;floor_num: 8&#125;)</code> —— 用
-            <b>結構化欄位精確過濾</b>，只包含 8 樓文檔；5 樓 / 18 樓根本不出現在
-            這條通路。單元精確通路（權重 2）再把目標單元頂上去。這兩條通路把「這份文檔
-            <b>確實在 8 樓</b>」這個確定信號投票進 RRF。
+            向量對「樓層數值」<b>毫無認知</b>：1801 / 501 跟 query 801
+            的餘弦相似度，跟某些「寫法較遠的 8樓變體」差不多、甚至更高。於是
+            <b>部分非 8樓文檔的分數高過部分 8樓文檔</b>，排序按分數倒序（排序本身
+            完全正確）就出現「8樓、5樓、8樓」相間。病根在輸入信號沒有樓層，不在排序。
           </div>
         </div>
         <div className="explain-section">
-          <h3>④ 實測 RRF 分（客戶原例 6栋801）</h3>
-          <div className="explain-note" style={{ marginBottom: 8 }}>
-            <b>先澄清一個關鍵：</b>排序<b>完全正確</b>，就是按 RRF 分嚴格倒序，
-            <b>不存在「分數微弱所以亂排」</b>。#1 的 801（0.01639）確實穩壓
-            501。穿插的真正原因，是<b>同一個 801 有多份寫法變體文檔</b>
-            （8楼801室 / 八楼801单元 / 第8层801号…），它們各自的語義／字面分
-            <b>參差不齊</b>。
+          <h3>③ 本欄如何解決</h3>
+          <div className="explain-note">
+            在<b>同一個 hybrid 候選集之上</b>，把 floor_num == 查詢樓層 的文檔
+            <b>穩定分組置頂</b>（tier 0/1/2），組內保留 hybrid 原排名。
+            非同樓層文檔整批降到後面，同樓層文檔整批升到前面。
+            <span style={{ color: "var(--green)" }}>
+              {" "}
+              top5 純度 5/5
+            </span>
+            。
           </div>
-          <div className="feature-list">
-            <div className="feature-item">
-              <div className="fname">Baseline · Hybrid（兩條通路）· 逐份分數</div>
-              <div
-                className="fdetail"
-                style={{
-                  fontFamily: "ui-monospace, Menlo, monospace",
-                  lineHeight: 1.7,
-                }}
-              >
-                #1 8楼801 &nbsp;rrf=0.01639（vec 0.839）<br />
-                #4 8楼801 &nbsp;rrf=0.01531（vec 0.767）<br />
-                <span style={{ color: "var(--red)" }}>
-                  #5 18楼1801 rrf=0.01529（vec 0.805）← 穿插
-                </span>
-                <br />
-                <span style={{ color: "var(--red)" }}>
-                  #6 5楼501 &nbsp;rrf=0.01517（vec 0.804）← 穿插
-                </span>
-                <br />
-                #7 8楼801 &nbsp;rrf=0.01486（vec 0.765）← 被壓到後面
-              </div>
-            </div>
-            <div className="feature-item">
-              <div className="fname">為什麼 18楼/5楼 會插進來？</div>
-              <div className="fdetail">
-                有一份「寫法較遠」的 8楼801（#7，vec 0.765）語義分
-                <b>本身就低過</b> 18楼1801（vec 0.805）和 5楼501（vec 0.804）。
-                對 embedding 來說，1801 / 501 跟 query 801 的相似度，
-                <b>天生就跟某些 8楼變體差不多、甚至更高</b>。排序按分數倒序，
-                自然把這些高分的非 8楼文檔排到中間 → top5 純度 4/5。病根是
-                vector / lexical 兩條通路<b>對「樓層數值」毫無認知</b>。
-              </div>
-            </div>
-            <div className="feature-item">
-              <div className="fname">$rankFusion + Floor 如何解決</div>
-              <div className="fdetail">
-                <b>不是靠拉大 801 與 501 的分差</b>，而是：floorExact 通路 ={" "}
-                <code>$match(&#123;floor_num: 8&#125;)</code> 把 18楼 / 5楼
-                <b>直接篩走</b>，它們根本不出現在這條通路、拿不到這張票；
-                所有 8楼文檔（連 #7 那份低分的）都多得一票 → 集體升到
-                18楼 / 5楼之上。<span style={{ color: "var(--green)" }}>
-                  {" "}
-                  501 跌出 top10，top5 純度 5/5
-                </span>
-                。
-              </div>
-            </div>
-          </div>
-          <div className="explain-note" style={{ marginTop: 8 }}>
-            <b>一句話：</b>不是 RRF 更準、也不是「分差微弱」，而是 Hybrid 兩條通路
-            對樓層無認知，導致部分非 8楼文檔的語義分高過部分 8楼文檔；
-            $rankFusion + Floor 用結構化 <code>floor_num</code> /{" "}
-            <code>unit_code</code> 精確過濾，多加一張「確定同樓層」的票，
-            把所有同樓層文檔整體壓到頂部。
-          </div>
+        </div>
+        <div className="explain-note" style={{ marginTop: 8 }}>
+          <b>一句話：</b>不是換了更強的檢索，而是承認「樓層是結構化欄位、不是語義」，
+          於是在 hybrid 候選集之上用<b>純結構的分組排序</b>把同樓層文檔置頂——
+          不碰大廈名、無 magic number、多語言通用。
         </div>
       </Modal>
 

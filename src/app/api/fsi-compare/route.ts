@@ -22,10 +22,8 @@ import {
   vectorSearch,
   hybridSearch,
   vectorRerankSearch,
-  floorRankFusionSearch,
-  buildFloorRankFusionPipeline,
 } from "@/lib/retrieval";
-import { parseAddressQuery } from "@/lib/floorRank";
+import { parseAddressQuery, floorAwareRerank } from "@/lib/floorRank";
 import { explainForMode } from "@/lib/explain";
 import { env } from "@/lib/env";
 
@@ -35,9 +33,10 @@ export const maxDuration = 60;
 const FSI_FILTER = { metadataType: "fsi" };
 
 /**
- * Render the native $rankFusion + floor pipeline as annotated pseudo-JSON so the
- * explanation comments sit BESIDE the query lines (like source-code comments),
- * rather than in a separate block. The shape mirrors buildFloorRankFusionPipeline.
+ * Render the pipeline as annotated pseudo-JSON so the comments sit BESIDE the
+ * query lines. This shows the DESIGN: standard hybrid ($rankFusion of vector +
+ * lexical) does the retrieval (building understood here); then an application-
+ * layer step stably re-groups by floor/unit ON TOP of the hybrid result.
  */
 function buildAnnotatedFloorPipeline(
   query: string,
@@ -47,63 +46,44 @@ function buildAnnotatedFloorPipeline(
   const q = JSON.stringify(query);
   const floor = parsed.floor ?? "<未解析>";
   const unit = parsed.unit ?? "<未解析>";
-  return `[
+  return `// ── 步驟 1：標準 hybrid 檢索（大廈／地址語義由此理解，不匹配大廈名、不用 regex、多語言通用）──
+[
   {
     "$rankFusion": {                          // 官方 stage：MongoDB 8.0+ 原生混合檢索
       "input": {
         "pipelines": {                        // $rankFusion 內部欄位（非 operator）
-                                              //   下面 4 個鍵名都係我哋自訂的 pipeline 名稱（每個對應一條檢索通路）
-
           "vector": [                         // 向量檢索通路（pipeline 名稱自訂）
-            { "$vectorSearch": {              // 官方 stage
+            { "$vectorSearch": {
               "index": ${JSON.stringify(env.vectorIndex)},
               "path": "chunkText",
               "query": ${q},
               "numCandidates": 150,
               "limit": ${pool},
-              "filter": { "metadataType": "fsi" }   // 每條通路各自過濾（$rankFusion 無共享前置 $match）
+              "filter": { "metadataType": "fsi" }
             } }
           ],
-
           "lexical": [                        // 詞法檢索通路（pipeline 名稱自訂）
             { "$search": { /* compound BM25 over chunkText / title / exactTerms … */ } },
-            { "$match": { "metadataType": "fsi" } },  // 同樣每條通路各自過濾
-            { "$limit": ${pool} }
-          ],
-
-          "floorExact": [                     // 樓層精確通路（pipeline 名稱自訂）
-            { "$match": {
-                "metadataType": "fsi",
-                "floor_num": ${floor}         // ← 由查詢解析出的樓層
-            } },
-            { "$sort": { "unit_code": 1, "_id": 1 } },  // 排序（排序後才可作為 $rankFusion 的輸入子管線）
-            { "$limit": ${pool} }
-          ],
-
-          "unitExact": [                      // 單元精確通路（pipeline 名稱自訂）
-            { "$match": {
-                "metadataType": "fsi",
-                "unit_code": ${JSON.stringify(unit)}    // ← 由查詢解析出的單元
-            } },
-            { "$sort": { "floor_num": 1, "_id": 1 } },
+            { "$match": { "metadataType": "fsi" } },
             { "$limit": ${pool} }
           ]
         }
       },
-      "combination": {                        // $rankFusion 內部欄位（非 operator）
-        "weights": {                          // 只係「聲明各條通路在 RRF 公式中的乘數」
-          "vector": 1,                        //   實際計算由引擎按官方 RRF 公式做：
-          "lexical": 1,                       //   score(d) = Σ weightᵢ × 1/(60 + rankᵢ(d))
-          "floorExact": 1,
-          "unitExact": 2                      // ← 目標單元多一票、且權重 2 → 置頂
-        }
-      },
-      "scoreDetails": true                    // 輸出每份文檔的 RRF 分解（供除錯／展示）
+      "combination": { "weights": { "vector": 1, "lexical": 1 } }  // 只有兩條通路；無樓層通路
     }
   },
-  { "$limit": ${pool} },
-  { "$project": { /* 顯示欄位 + score:{$meta:"score"} + scoreDetails */ } }
-]`;
+  { "$limit": ${pool} }
+]
+// ↑ hybrid 返回的候選集「已經是正確大廈」——樓層／單元不參與檢索。
+
+// ── 步驟 2：在候選集之上，樓層／單元分組置頂（應用層，純結構排序，非 DB stage）──
+parseAddressQuery(${q})  →  { floor: ${floor}, unit: ${JSON.stringify(unit)} }
+stableRegroup(候選集, floor, unit):
+   tier 0  →  floor_num == ${floor} 且 unit == ${JSON.stringify(unit)}   // 目標房間
+   tier 1  →  floor_num == ${floor}                                      // 同樓層鄰居
+   tier 2  →  其餘
+   // 組內保留 hybrid 原排名（JS 穩定排序）作 tie-break
+   // 無 +100/−10 之類 magic number；不重新檢索；不碰大廈名`;
 }
 
 export async function POST(req: NextRequest) {
@@ -117,9 +97,10 @@ export async function POST(req: NextRequest) {
 
     const parsed = parseAddressQuery(query);
 
-    // Run all four modes on the same query. The floor-rankfusion arm uses the
-    // parsed floor/unit to add native $rankFusion ranked arms.
-    const [vec, hyb, rer, nativeFloor] = await Promise.all([
+    // Run the three retrieval modes. The floor-regroup column is built by
+    // re-ranking the SAME hybrid result (see below) — it does NOT run its own
+    // retrieval, does NOT match building names, and works for any language.
+    const [vec, hyb, rer] = await Promise.all([
       vectorSearch(query, Math.max(limit, 12), FSI_FILTER),
       hybridSearch(query, Math.max(limit, 12), {
         filter: FSI_FILTER,
@@ -127,94 +108,82 @@ export async function POST(req: NextRequest) {
         lexicalWeight: 0.5,
       }),
       vectorRerankSearch(query, limit, 25, FSI_FILTER).catch(() => []),
-      // MongoDB-native: $rankFusion with extra floor/unit ranked arms (RRF).
-      floorRankFusionSearch(query, Math.max(limit, 12), {
-        filter: FSI_FILTER,
-        floor: parsed.floor,
-        unit: parsed.unit,
-      }).catch(() => []),
     ]);
 
-    // Real pipeline for the native arm (shown in the explain modal).
-    const nativePipeline = await buildFloorRankFusionPipeline(
-      query,
-      Math.max(limit, 12),
-      { filter: FSI_FILTER, floor: parsed.floor, unit: parsed.unit }
-    );
+    // Floor/unit re-rank ON TOP OF the hybrid candidate set (customer's design):
+    // building understood by hybrid; floor/unit only stably re-group the result.
+    const regrouped = floorAwareRerank(hyb, query);
+    const nativeFloor = regrouped.hits;
+
+    const hybridExplain = explainForMode("hybrid", query, Math.max(limit, 12), {});
     const nativeExplain = {
-      mode: "floor-rankfusion",
-      title: "$rankFusion + 樓層通路 (MongoDB 原生 RRF)",
+      mode: "floor-regroup",
+      title: "Hybrid + 樓層/單元置頂（候選集之上再排序）",
       features: [
         {
-          name: "$rankFusion (Reciprocal Rank Fusion, k=60)",
+          name: "① Hybrid search（$rankFusion：向量 + 詞法）",
           detail:
-            "MongoDB 原生混合檢索。將多條檢索通路（各自排序後作為輸入子管線）的排名用官方 RRF 公式融合，權重可配置——無需手寫加分公式或 magic number。要求 MongoDB 8.0+。",
+            "先跑標準 hybrid 檢索。大廈／地址語義完全由 hybrid 理解——不匹配大廈名、不用 regex，天然支援多語言。返回的候選集已是正確大廈。",
         },
         {
-          name: "向量檢索通路（$vectorSearch）",
-          detail: "語義候選召回。",
-        },
-        {
-          name: "詞法檢索通路（$search, BM25）",
-          detail: "字面／精確詞召回。",
-        },
-        {
-          name: "樓層精確通路（$match + $sort）",
-          detail: `僅包含樓層 = ${parsed.floor ?? "?"} 的文檔的檢索通路。這些文檔因多出現在一條通路而獲得額外 RRF 票數，自然被抬到同樓層組頂部。`,
-        },
-        {
-          name: "單元精確通路（$match + $sort）",
-          detail: `僅包含單元 = ${parsed.unit ?? "?"} 的文檔（權重 2），被查詢單元本身排最前。`,
+          name: "② 樓層／單元分組置頂（候選集之上，純結構排序）",
+          detail: `在 hybrid 候選集之上，把 floor_num = ${parsed.floor ?? "?"}（且 unit = ${parsed.unit ?? "?"}）的文檔穩定置頂。分三層：精確樓層+單元 → 精確樓層 → 其餘。組內保留 hybrid 原排名作 tie-break。無任何加分數字 / magic number，不重新檢索。`,
         },
       ],
       stages: [
         {
-          label: "單條聚合 — $rankFusion（向量 + 詞法 + 樓層 + 單元 四條檢索通路）",
+          label: "① Hybrid 檢索 — $rankFusion（向量 + 詞法）",
           collection: `${env.dbName}.${env.collectionName}`,
-          pipeline: nativePipeline,
+          pipeline: hybridExplain.stages[0]?.pipeline ?? [],
           annotatedPipeline: buildAnnotatedFloorPipeline(
             query,
             parsed,
             Math.max(limit, 12)
           ),
         },
+        {
+          label: "② 樓層／單元分組置頂（應用層，非 DB stage）",
+          collection: "(in-app · 純結構排序)",
+          pipeline: [
+            {
+              parseAddressQuery: {
+                input: query,
+                output: { floor: parsed.floor ?? null, unit: parsed.unit ?? null },
+              },
+            },
+            {
+              stableRegroup: {
+                tier0: "floor_num == 查詢樓層 且 unit == 查詢單元",
+                tier1: "floor_num == 查詢樓層",
+                tier2: "其餘",
+                tieBreak: "組內保留 hybrid 原排名（穩定排序）",
+              },
+            },
+          ],
+        },
       ],
-      // Annotations clarifying which tokens are official MongoDB stages/fields
-      // and which are just our arbitrary pipeline NAMES.
       annotations: [
         {
-          token: "$rankFusion",
+          token: "① $rankFusion（hybrid）",
           kind: "官方 stage",
           detail:
-            "MongoDB 8.0+ 原生聚合 stage。接收多條輸入子管線（每條對應一條檢索通路），用官方 RRF 演算法融合排名。",
+            "標準 hybrid 檢索：$rankFusion 融合向量 + 詞法兩條子管線。大廈／地址語義由此理解——不匹配大廈名、不用 regex、天然多語言。它返回的候選集已是正確大廈。",
         },
         {
-          token: "input.pipelines",
-          kind: "$rankFusion 內部欄位",
+          token: "② parseAddressQuery + stableRegroup",
+          kind: "應用層邏輯（非 DB stage）",
           detail:
-            "$rankFusion spec 的子欄位（不是獨立 operator），值是一個「pipeline 名稱 → 子管線」的對映。下面 vector/lexical/floorExact/unitExact 都係我哋自訂的 pipeline 名稱（各對應一條檢索通路）。",
+            "在 hybrid 候選集之上進行。先從查詢解析樓層／單元，再把候選穩定分三層置頂（精確樓層+單元 → 精確樓層 → 其餘）。不重新檢索、不碰大廈名。",
         },
         {
-          token: "vector / lexical / floorExact / unitExact",
-          kind: "自訂 pipeline 名稱",
+          token: "純結構排序（無 magic number）",
+          kind: "設計原則",
           detail:
-            "呢啲唔係 stage，只係 input.pipelines 裏面的鍵名（可任意命名，各代表一條檢索通路）。每條子管線內部用的先係真正的官方 stage。",
-        },
-        {
-          token: "$vectorSearch / $search / $match / $sort / $limit",
-          kind: "官方 stage",
-          detail:
-            "各條通路內部用的都是 MongoDB 官方 stage：$vectorSearch（語義）、$search（BM25）、$match（過濾同樓層／單元）、$sort（排序後才可作為輸入子管線）、$limit。",
-        },
-        {
-          token: "combination / combination.weights",
-          kind: "$rankFusion 內部欄位",
-          detail:
-            "combination 不是獨立的 aggregation operator，而是 $rankFusion spec 的子欄位；weights 只是「聲明每條檢索通路在 RRF 公式中的乘數」。實際的 weight 計算由 MongoDB 引擎按官方 RRF 公式完成，不是我哋自己算（見下方 Notes 的公式與實例）。",
+            "分組只用離散層級（tier 0/1/2），組內用 JS 穩定排序保留 hybrid 原名次作 tie-break。沒有 +100 / −10 之類加分數字，也沒有樓層距離運算。",
         },
       ],
       notes:
-        "【weight 如何計算】combination 不是獨立 operator，而是 $rankFusion 的內部欄位。weight 計算完全由 MongoDB 引擎按官方 RRF 公式完成：score(d) = Σ_通路 weightᵢ × 1/(60 + rankᵢ(d))；rankᵢ(d) 是文檔 d 在第 i 條通路輸出中的名次，60 是 MongoDB 定義的固定敏感度常數，weightᵢ 就是 combination.weights 裏你給該通路的數字。文檔若不出現在某條通路，該項不計。實例：查 6栋801 時，801室 出現在全部四條通路，RRF 分 = (1+1+1+2)/61 ≈ 0.082（unitExact 權重 2）；803室 不在單元精確通路，少了最重那一票，分數較低 → 被引擎排在 801 之後。這就是 weight 的實際作用：只是公式中的乘數，沒有任何手寫加分邏輯。 【關於重複的 $match】$rankFusion 每條子管線獨立執行，沒有共享前置 $match，因此 metadataType:'fsi' 過濾必須在每條通路各自出現——是固有結構、不是冗餘；程式碼層已用統一 helper 生成。 【版本】要求 MongoDB 8.0+；升級 8.2 可用 $score 表達式，8.3 可用 $scoreFusion。",
+        "【為何這樣設計】樓層／單元只是「hybrid 候選集之上的再排序」，不是獨立檢索通路。大廈由 hybrid（向量語義 + 詞法）自己理解，因此不需要匹配大廈名、不用 regex，換成其他 entity 或多語言地址一樣可用。舊版把樓層／單元做成獨立 $rankFusion 通路（全 collection $match 同樓層／同單元）是錯的：它會投票給其他大廈的同樓層文檔，令「翠湖花園」這種關鍵字被忽略。 【純結構排序】置頂只用離散層級 + 穩定排序，組內保留 hybrid 原排名，無任何 magic number。 【單元格式】unit_code 有補零（0803）與不補零（803）兩種寫法，比較時做正規化（去前導零），屬資料正規化、非排序權重。",
     };
 
     const columns = [
@@ -236,8 +205,8 @@ export async function POST(req: NextRequest) {
       },
       {
         key: "floor-rankfusion",
-        label: "$rankFusion + Floor (MongoDB 原生)",
-        note: `官方 RRF 融合，樓層／單元通路加票，無 magic number`,
+        label: "Hybrid + 樓層/單元置頂",
+        note: `hybrid 候選集之上分組置頂，純結構排序、不匹配大廈名`,
         parsed,
         hits: (nativeFloor as any[]).slice(0, limit),
         explain: nativeExplain,

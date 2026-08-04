@@ -92,9 +92,32 @@ export interface FloorRankResult {
 }
 
 /**
- * Re-rank a candidate pool with floor-aware scoring. Non-destructive: returns a
- * new array; each hit gets an added `floorScore` (on a copy) and re-sorted.
- * Hits without floor_num (non-FSI) keep their base order at the tail.
+ * Unit codes are stored in mixed formats across the corpus: floor-padded
+ * ("0803") and raw ("803"). Compare tolerantly so "0803" matches "803".
+ * This is data normalization, NOT a ranking weight.
+ */
+export function unitCodeEquals(a?: string, b?: string): boolean {
+  if (!a || !b) return false;
+  const norm = (s: string) => s.replace(/^0+(?=\d)/, ""); // strip leading zeros
+  return norm(a) === norm(b);
+}
+
+/**
+ * Floor/unit re-rank ON TOP OF the hybrid candidate set — the customer's
+ * requested design.
+ *
+ * IMPORTANT: this does NOT retrieve anything and does NOT match building names.
+ * The building is understood entirely by the upstream hybrid search (vector +
+ * lexical); its result order already reflects the right building/language. Here
+ * we only STABLY re-group the candidates by discrete tiers:
+ *
+ *   tier 0: exact floor AND exact unit   (the queried room)
+ *   tier 1: exact floor                  (same-floor neighbours)
+ *   tier 2: everything else / no floor info
+ *
+ * Within each tier the ORIGINAL hybrid order is preserved (stable sort), so the
+ * hybrid relevance is the tie-breaker. There is NO numeric boost / magic number
+ * and NO floor-distance arithmetic — ordering is purely structural.
  */
 export function floorAwareRerank(
   hits: SearchHit[],
@@ -102,27 +125,28 @@ export function floorAwareRerank(
 ): FloorRankResult {
   const parsed = parseAddressQuery(query);
 
-  // Base semantic score is used as intra-group tie-breaker; normalise to [0,1)
-  // by rank so the boost dominates deterministically.
-  const n = hits.length || 1;
-  const scored = hits.map((h, i) => {
-    const base = 1 - i / n; // higher = better original rank
-    let boost = 0;
-    if (parsed.floor != null && h.floor_num != null) {
-      if (h.floor_num === parsed.floor) {
-        boost += 100; // exact floor -> force to top group
-        if (parsed.unit && h.unit_code === parsed.unit) boost += 50; // exact unit first
-      } else {
-        boost -= Math.abs(h.floor_num - parsed.floor) * 10; // farther floor = lower
-      }
-    }
-    return { h, key: boost + base };
-  });
+  // No parsed floor -> nothing to re-group; return hybrid order untouched.
+  if (parsed.floor == null) {
+    return { hits: hits.map((h, i) => ({ ...h, rank: i + 1 })), parsed };
+  }
 
-  scored.sort((a, b) => b.key - a.key);
+  const tier = (h: SearchHit): number => {
+    if (h.floor_num == null) return 2;
+    if (h.floor_num !== parsed.floor) return 2;
+    // exact floor:
+    if (parsed.unit && unitCodeEquals(h.unit_code, parsed.unit)) return 0;
+    return 1;
+  };
+
+  // Stable sort by tier only. JS Array.prototype.sort is stable, so items in
+  // the same tier keep their incoming hybrid order (the tie-break).
+  const ordered = hits
+    .map((h, i) => ({ h, i, t: tier(h) }))
+    .sort((a, b) => a.t - b.t || a.i - b.i)
+    .map((x) => x.h);
 
   return {
-    hits: scored.map((s, i) => ({ ...s.h, rank: i + 1 })),
+    hits: ordered.map((h, i) => ({ ...h, rank: i + 1 })),
     parsed,
   };
 }
