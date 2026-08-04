@@ -685,9 +685,12 @@ export default function FloorLab() {
         <div className="explain-section">
           <h3>④ 為什麼需要這一步 Why</h3>
           <div className="explain-note">
-            純 vector / hybrid 檢索只按語義分排序。801 / 803 / 501 三者文本幾乎相同，
-            餘弦分差 &lt; 0.5%，樓層數值差異被向量抹平 → 出現「8樓、5樓、8樓」相間。
-            額外的樓層、單元兩條檢索通路補上「樓層鄰近度」這一結構化信號，
+            純 vector / hybrid 檢索只按語義分排序，而向量對「樓層數值」毫無認知：
+            1801 / 501 跟 query 801 的餘弦相似度，跟某些「寫法較遠的 8樓變體」
+            差不多、甚至更高。於是部分非 8樓文檔的分數<b>高過</b>部分 8樓文檔，
+            排序倒序後就出現「8樓、5樓、8樓」相間（排序本身正確，問題在輸入信號）。
+            額外的樓層、單元兩條檢索通路用結構化 <code>floor_num</code> /{" "}
+            <code>unit_code</code> 精確過濾，多給同樓層文檔一票，
             <b> 無需重建任何索引</b>，即可修復亂序。要求 MongoDB 8.0+；
             升級 8.2 可用 <code>$score</code> 表達式，8.3 可用{" "}
             <code>$scoreFusion</code>。
@@ -716,8 +719,9 @@ export default function FloorLab() {
             <div className="feature-item">
               <div className="fname">向量檢索通路 · 語義相似度</div>
               <div className="fdetail">
-                801 / 803 / 501 字串幾乎相同，向量餘弦分差 &lt; 0.5% →
-                樓層數值差異被抹平，向量檢索通路根本分不清 8 樓還是 5 樓。
+                向量對「樓層數值」毫無認知：1801 / 501 跟 query 801 的餘弦相似度，
+                跟某些寫法較遠的 8樓變體差不多、甚至更高 → 部分非 8樓文檔的分數
+                會高過部分 8樓文檔。
               </div>
             </div>
             <div className="feature-item">
@@ -730,8 +734,9 @@ export default function FloorLab() {
             <div className="feature-item">
               <div className="fname">結果：garbage in, garbage out</div>
               <div className="fdetail">
-                兩條通路都沒有樓層信號，RRF 融合再好也救不回 →
-                5 樓 / 18 樓穿插進 8 樓群。
+                兩條通路都沒有樓層信號，RRF 只是忠實地按分數倒序融合（排序無錯）
+                → 那些分數偏高的 5 樓 / 18 樓文檔就插進 8 樓群。融合演算法再好，
+                輸入信號沒有樓層，也救不回。
               </div>
             </div>
           </div>
@@ -747,37 +752,68 @@ export default function FloorLab() {
         </div>
         <div className="explain-section">
           <h3>④ 實測 RRF 分（客戶原例 6栋801）</h3>
+          <div className="explain-note" style={{ marginBottom: 8 }}>
+            <b>先澄清一個關鍵：</b>排序<b>完全正確</b>，就是按 RRF 分嚴格倒序，
+            <b>不存在「分數微弱所以亂排」</b>。#1 的 801（0.01639）確實穩壓
+            501。穿插的真正原因，是<b>同一個 801 有多份寫法變體文檔</b>
+            （8楼801室 / 八楼801单元 / 第8层801号…），它們各自的語義／字面分
+            <b>參差不齊</b>。
+          </div>
           <div className="feature-list">
             <div className="feature-item">
-              <div className="fname">Baseline · Hybrid（兩條通路）</div>
-              <div className="fdetail">
-                801 rrf=<b>0.01639</b> vs 501 rrf=<b>0.01517</b> ——
-                差距僅 0.001，微弱易穿插；
+              <div className="fname">Baseline · Hybrid（兩條通路）· 逐份分數</div>
+              <div
+                className="fdetail"
+                style={{
+                  fontFamily: "ui-monospace, Menlo, monospace",
+                  lineHeight: 1.7,
+                }}
+              >
+                #1 8楼801 &nbsp;rrf=0.01639（vec 0.839）<br />
+                #4 8楼801 &nbsp;rrf=0.01531（vec 0.767）<br />
                 <span style={{ color: "var(--red)" }}>
-                  {" "}
-                  #5=18楼1801、#6=5楼501 穿插，top5 純度 4/5
+                  #5 18楼1801 rrf=0.01529（vec 0.805）← 穿插
                 </span>
-                。
+                <br />
+                <span style={{ color: "var(--red)" }}>
+                  #6 5楼501 &nbsp;rrf=0.01517（vec 0.804）← 穿插
+                </span>
+                <br />
+                #7 8楼801 &nbsp;rrf=0.01486（vec 0.765）← 被壓到後面
               </div>
             </div>
             <div className="feature-item">
-              <div className="fname">$rankFusion + Floor（四條通路）</div>
+              <div className="fname">為什麼 18楼/5楼 會插進來？</div>
               <div className="fdetail">
-                801 rrf=<b style={{ color: "var(--green)" }}>0.06404</b>
-                （多了 floorExact + unitExact 兩票，其中一票權重 2）→
-                拉開約 4 倍；
-                <span style={{ color: "var(--green)" }}>
+                有一份「寫法較遠」的 8楼801（#7，vec 0.765）語義分
+                <b>本身就低過</b> 18楼1801（vec 0.805）和 5楼501（vec 0.804）。
+                對 embedding 來說，1801 / 501 跟 query 801 的相似度，
+                <b>天生就跟某些 8楼變體差不多、甚至更高</b>。排序按分數倒序，
+                自然把這些高分的非 8楼文檔排到中間 → top5 純度 4/5。病根是
+                vector / lexical 兩條通路<b>對「樓層數值」毫無認知</b>。
+              </div>
+            </div>
+            <div className="feature-item">
+              <div className="fname">$rankFusion + Floor 如何解決</div>
+              <div className="fdetail">
+                <b>不是靠拉大 801 與 501 的分差</b>，而是：floorExact 通路 ={" "}
+                <code>$match(&#123;floor_num: 8&#125;)</code> 把 18楼 / 5楼
+                <b>直接篩走</b>，它們根本不出現在這條通路、拿不到這張票；
+                所有 8楼文檔（連 #7 那份低分的）都多得一票 → 集體升到
+                18楼 / 5楼之上。<span style={{ color: "var(--green)" }}>
                   {" "}
-                  501 直接跌出 top10，top5 純度 5/5
+                  501 跌出 top10，top5 純度 5/5
                 </span>
                 。
               </div>
             </div>
           </div>
           <div className="explain-note" style={{ marginTop: 8 }}>
-            <b>一句話：</b>不是 RRF 更準，而是「餵了更準的信號俾 RRF」。額外兩條通路
-            用結構化 <code>floor_num</code> / <code>unit_code</code>
-            精確過濾，把同樓層文檔壓到頂部。
+            <b>一句話：</b>不是 RRF 更準、也不是「分差微弱」，而是 Hybrid 兩條通路
+            對樓層無認知，導致部分非 8楼文檔的語義分高過部分 8楼文檔；
+            $rankFusion + Floor 用結構化 <code>floor_num</code> /{" "}
+            <code>unit_code</code> 精確過濾，多加一張「確定同樓層」的票，
+            把所有同樓層文檔整體壓到頂部。
           </div>
         </div>
       </Modal>
