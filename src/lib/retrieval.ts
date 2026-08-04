@@ -67,10 +67,21 @@ export interface SearchHit {
   correctionNote?: string;
   /** Why this hit was (re)ordered by an approved KnowledgePolicy, if any. */
   policyNote?: string;
+  // ----- FSI EXPANSION: structured address fields (surfaced for ranking/UI) -----
+  metadataType?: string;
+  floor_num?: number;
+  unit_code?: string;
+  block?: string;
+  building_name?: string;
+  district?: string;
+  estate?: string;
+  raw_address?: string;
+  /** FSI EXPANSION: chunk _id, surfaced so the lab can fetch the raw document. */
+  _id?: string;
 }
 
 const PROJECT = {
-  _id: 0,
+  _id: 1,
   docId: 1,
   chunkIndex: 1,
   title: 1,
@@ -94,6 +105,15 @@ const PROJECT = {
   obsoleteFlag: 1,
   effectiveFrom: 1,
   ocrUsed: 1,
+  // FSI EXPANSION: structured address fields.
+  metadataType: 1,
+  floor_num: 1,
+  unit_code: 1,
+  block: 1,
+  building_name: 1,
+  district: 1,
+  estate: 1,
+  raw_address: 1,
 } as const;
 
 function toHit(doc: any, rank: number): SearchHit {
@@ -121,6 +141,16 @@ function toHit(doc: any, rank: number): SearchHit {
     obsoleteFlag: doc.obsoleteFlag,
     effectiveFrom: doc.effectiveFrom,
     ocrUsed: doc.ocrUsed,
+    // FSI EXPANSION: carry structured fields through for floor-aware ranking + UI.
+    metadataType: doc.metadataType,
+    floor_num: doc.floor_num,
+    unit_code: doc.unit_code,
+    block: doc.block,
+    building_name: doc.building_name,
+    district: doc.district,
+    estate: doc.estate,
+    raw_address: doc.raw_address,
+    _id: doc._id != null ? String(doc._id) : undefined,
     score: 0,
     rank,
   };
@@ -319,6 +349,139 @@ export async function buildRankFusionPipeline(
   ];
 }
 
+// ---------------------------------------------------------------------------
+// FSI EXPANSION — Native floor-aware ranking via $rankFusion (MongoDB 8.0+).
+//
+// Instead of a hand-written scoring heuristic (magic numbers), this uses
+// MongoDB's OWN Reciprocal Rank Fusion. We add extra ranked input pipelines
+// that ONLY contain the documents matching the queried floor / unit. Because a
+// document that appears in more input pipelines gets a higher RRF score
+// (per the official RRF formula), the exact-floor and exact-unit docs are
+// naturally lifted to the top — no arbitrary weights, no custom formula.
+//
+// $rankFusion requires each input pipeline to be a "ranked" pipeline, so the
+// structured arms are $match (selection) followed by an explicit $sort.
+// ---------------------------------------------------------------------------
+export interface FloorFusionOpts extends HybridOptions {
+  /** Parsed target floor (exact-match arm). */
+  floor?: number;
+  /** Parsed target unit code (exact-match arm). */
+  unit?: string;
+  /** Weight of the exact-floor arm (default 1 — same as the semantic arms). */
+  floorWeight?: number;
+  /** Weight of the exact-unit arm (default 2 — the queried unit itself first). */
+  unitWeight?: number;
+}
+
+export async function buildFloorRankFusionPipeline(
+  query: string,
+  limit: number,
+  opts: FloorFusionOpts = {}
+): Promise<unknown[]> {
+  const vectorWeight = opts.vectorWeight ?? 1;
+  const lexicalWeight = opts.lexicalWeight ?? 1;
+  const floorWeight = opts.floorWeight ?? 1;
+  const unitWeight = opts.unitWeight ?? 2;
+  const pool = opts.poolSize ?? 50;
+
+  // The dataset filter (e.g. metadataType:"fsi") MUST be applied inside every
+  // $rankFusion input pipeline — each arm runs independently, so there is no
+  // shared pre-$match. We centralise it here to avoid duplicating the literal.
+  const baseFilter = opts.filter ?? {};
+  const hasBaseFilter = Object.keys(baseFilter).length > 0;
+
+  const vectorStage = await buildVectorSearchStage(query, pool, 150);
+  if (hasBaseFilter) {
+    // Vector arm applies the filter natively via $vectorSearch.filter.
+    vectorStage.filter = baseFilter;
+  }
+
+  /**
+   * Build a structured "ranked" arm: $match (baseFilter + extra) -> $sort ->
+   * $limit. $rankFusion requires a $sort for a non-search selection pipeline.
+   */
+  const structuredArm = (
+    extra: Record<string, unknown>,
+    sort: Record<string, 1 | -1>
+  ): Record<string, unknown>[] => [
+    { $match: { ...baseFilter, ...extra } },
+    { $sort: sort },
+    { $limit: pool },
+  ];
+
+  const lexicalSub: Record<string, unknown>[] = [
+    { $search: buildLexicalSearchStage(query) },
+    ...(hasBaseFilter ? [{ $match: baseFilter }] : []),
+    { $limit: pool },
+  ];
+
+  const pipelines: Record<string, unknown[]> = {
+    vector: [{ $vectorSearch: vectorStage }],
+    lexical: lexicalSub,
+  };
+  const weights: Record<string, number> = {
+    vector: vectorWeight,
+    lexical: lexicalWeight,
+  };
+
+  // Exact-floor arm: only docs on the queried floor get an extra RRF vote.
+  if (opts.floor != null) {
+    pipelines.floorExact = structuredArm(
+      { floor_num: opts.floor },
+      { unit_code: 1, _id: 1 }
+    );
+    weights.floorExact = floorWeight;
+  }
+
+  // Exact-unit arm: the queried unit itself gets one more RRF vote -> top.
+  if (opts.unit) {
+    pipelines.unitExact = structuredArm(
+      { unit_code: opts.unit },
+      { floor_num: 1, _id: 1 }
+    );
+    weights.unitExact = unitWeight;
+  }
+
+  return [
+    {
+      $rankFusion: {
+        input: { pipelines },
+        combination: { weights },
+        scoreDetails: true,
+      },
+    },
+    { $limit: limit },
+    {
+      $project: {
+        ...PROJECT,
+        score: { $meta: "score" },
+        scoreDetails: { $meta: "scoreDetails" },
+      },
+    },
+  ];
+}
+
+export async function floorRankFusionSearch(
+  query: string,
+  limit = 8,
+  opts: FloorFusionOpts = {}
+): Promise<SearchHit[]> {
+  const col = await getCollection();
+  const pipeline = await buildFloorRankFusionPipeline(query, limit, opts);
+  const docs = await col.aggregate(pipeline as Document[]).toArray();
+  return docs.map((d, i) => {
+    const hit = toHit(d, i + 1);
+    hit.score = d.score ?? 0;
+    const details: any[] = d.scoreDetails?.details ?? [];
+    for (const arm of details) {
+      if (arm.inputPipelineName === "vector") hit.vectorScore = arm.value;
+      if (arm.inputPipelineName === "lexical") hit.lexicalScore = arm.value;
+    }
+    hit.matchedTerms = matchedTermsFor(query, hit);
+    return hit;
+  });
+}
+
 export async function hybridSearch(
   query: string,
   limit = 8,
@@ -464,6 +627,13 @@ export interface EnhancedSearchOptions extends HybridOptions {
   policyContext?: QueryContext;
   /** Persist a PolicyApplicationTrace for this query. Default true. */
   recordTrace?: boolean;
+  /**
+   * FSI EXPANSION: dataset isolation. When set (e.g. "property" | "fsi"), all
+   * search arms are filtered to that dataset via the `metadataType` field.
+   * Property docs seeded before this feature have no metadataType; a "property"
+   * request therefore also matches missing values (see filter build below).
+   */
+  metadataType?: "property" | "fsi";
 }
 
 export interface EnhancedSearchResult {
@@ -491,7 +661,19 @@ export async function runSearchEnhanced(
   const doTrace = opts.recordTrace ?? true;
 
   // Version-aware filter (prefer newest by excluding obsolete by default).
-  const filter = obsoleteFilter(includeObsolete);
+  let filter = obsoleteFilter(includeObsolete);
+
+  // FSI EXPANSION: physically isolate the two datasets by metadataType. For
+  // "property" we also accept docs where the field is absent (legacy seed data).
+  if (opts.metadataType) {
+    // Atlas $vectorSearch filters reject null in $in; use $ne so "property"
+    // also matches legacy docs that predate the metadataType field.
+    const dsFilter =
+      opts.metadataType === "property"
+        ? { metadataType: { $ne: "fsi" } }
+        : { metadataType: "fsi" };
+    filter = filter ? { ...filter, ...dsFilter } : dsFilter;
+  }
 
   // ----- Knowledge Policy Layer (deterministic, authoritative) -----
   // Resolve approved policies on the ORIGINAL query first so their query

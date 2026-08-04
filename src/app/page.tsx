@@ -10,6 +10,9 @@ import { FilePreviewDialog, PreviewTarget } from "@/components/FilePreview";
 import { ChatTab } from "@/components/ChatTab";
 import { SignaturesTab } from "@/components/SignaturesTab";
 import { useI18n } from "@/lib/i18n";
+// FSI EXPANSION: global industry mode (property/fsi) + presentational config.
+import { useIndustry } from "@/lib/industry-context";
+import { INDUSTRY_CONFIG, INDUSTRY_MODES } from "@/lib/industry";
 import { renderAnswer } from "@/lib/renderAnswer";
 
 interface MongoFeature {
@@ -139,6 +142,8 @@ const MODEL_MODES = ["vector-primary", "vector-multimodal"] as const;
 
 export default function Home() {
   const { t, lang, setLang } = useI18n();
+  // FSI EXPANSION: active dataset mode + resolved chrome (title/tagline/etc).
+  const { mode, setMode, chrome } = useIndustry();
   const [status, setStatus] = useState<Status | null>(null);
   const [query, setQuery] = useState(SAMPLES[0].q);
   const [tab, setTab] = useState<
@@ -218,6 +223,7 @@ export default function Home() {
           includeObsolete,
           applyCorrections,
           expandAliases,
+          metadataType: mode, // FSI EXPANSION: dataset isolation
         }),
       });
       const data = await res.json();
@@ -243,6 +249,7 @@ export default function Home() {
           includeObsolete,
           applyCorrections,
           expandAliases,
+          metadataType: mode, // FSI EXPANSION: dataset isolation
         }),
       });
       const data = await res.json();
@@ -261,7 +268,7 @@ export default function Home() {
       const res = await fetch("/api/rag", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, limit: 6, includeObsolete }),
+        body: JSON.stringify({ query, limit: 6, includeObsolete, metadataType: mode }),
       });
       const data = await res.json();
       setRag(data);
@@ -317,13 +324,29 @@ export default function Home() {
     <div className="app">
       <header className="header">
         <div className="brand">
-          <div className="leaf">PM</div>
+          <div className="leaf">{mode === "fsi" ? "FSI" : "PM"}</div>
           <div>
-            <h1>{t("app.title")}</h1>
-            <p>{t("app.tagline")}</p>
+            {/* FSI EXPANSION: title/tagline now driven by industry mode. */}
+            <h1>{chrome.title}</h1>
+            <p>{chrome.tagline}</p>
           </div>
         </div>
         <div className="status-pills">
+          {/* FSI EXPANSION: global dataset mode switcher. */}
+          <select
+            className="pill"
+            value={mode}
+            onChange={(e) =>
+              setMode(e.target.value === "fsi" ? "fsi" : "property")
+            }
+            title="Dataset mode"
+          >
+            {INDUSTRY_MODES.map((m) => (
+              <option key={m} value={m}>
+                {INDUSTRY_CONFIG[m][lang === "zh" ? "zh" : "en"].switchLabel}
+              </option>
+            ))}
+          </select>
           <button
             className="pill lang-toggle"
             onClick={() => setLang(lang === "en" ? "zh" : "en")}
@@ -400,7 +423,7 @@ export default function Home() {
             <input
               className="query-input"
               value={query}
-              placeholder={t("query.placeholder")}
+              placeholder={chrome.searchPlaceholder}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && onRun()}
             />

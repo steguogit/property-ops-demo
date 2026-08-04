@@ -82,6 +82,33 @@ export interface ChunkDoc {
   pageImageIndex?: number;
   /** Other documents this one references (multi-doc workflows). */
   relatedDocumentIds?: string[];
+
+  // ----- FSI EXPANSION -----
+  /**
+   * Dataset marker isolating the two demo modes within one collection:
+   * "property" (default, original data) | "fsi" (address verification).
+   * Absent == treated as "property" for backwards compatibility.
+   */
+  metadataType?: "property" | "fsi";
+  /** FSI: original, un-normalised address string (also stored as chunkText). */
+  raw_address?: string;
+  /** FSI: Hong Kong administrative district. */
+  district?: string;
+  /** FSI: estate / building short name. */
+  estate?: string;
+  /** FSI: block / tower designation (e.g. "Block 2", "座 A"). */
+  block?: string;
+  /** FSI: numeric floor — REQUIRED for FSI docs; drives exact-match rank boost. */
+  floor_num?: number;
+  /** FSI: unit / flat / room code (e.g. "A", "Flat 5", "室1203"). */
+  unit_code?: string;
+  /** FSI: full building name. */
+  building_name?: string;
+  /**
+   * FSI: GeoJSON point [lng, lat] for 2dsphere / $geoNear pre-filtering (Phase 4).
+   * Populated with synthetic HK coordinates by the FSI seed.
+   */
+  location?: { type: "Point"; coordinates: [number, number] };
 }
 
 /** Status of an uploaded source file as it moves through ingestion. */

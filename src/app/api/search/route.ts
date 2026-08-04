@@ -35,6 +35,8 @@ export async function POST(req: NextRequest) {
       expandAliases: body.expandAliases ?? true,
       applyPolicies: body.applyPolicies ?? true,
       policyContext: body.policyContext,
+      // FSI EXPANSION: dataset isolation driven by the global industry mode.
+      metadataType: body.metadataType === "fsi" ? "fsi" : "property",
     };
 
     if (!query) {

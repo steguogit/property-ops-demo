@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { I18nProvider } from "@/lib/i18n";
+// FSI EXPANSION: global industry-mode provider.
+import { IndustryProvider } from "@/lib/industry-context";
 
 export const metadata: Metadata = {
   title: "Property Operations Assistant — Atlas Retrieval Demo",
@@ -17,7 +19,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <I18nProvider>{children}</I18nProvider>
+        <I18nProvider>
+          <IndustryProvider>{children}</IndustryProvider>
+        </I18nProvider>
       </body>
     </html>
   );

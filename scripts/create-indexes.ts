@@ -95,6 +95,11 @@ async function main() {
     "versionLabel",
     "versionGroupId",
     "documentId",
+    // FSI EXPANSION: dataset isolation + exact structured filtering.
+    "metadataType",
+    "district",
+    "floor_num",
+    "unit_code",
   ]) {
     vectorFields.push({ type: "filter", path: f });
   }
@@ -127,6 +132,11 @@ async function main() {
     "versionLabel",
     "versionGroupId",
     "documentId",
+    // FSI EXPANSION: dataset isolation + exact structured filtering.
+    "metadataType",
+    "district",
+    "floor_num",
+    "unit_code",
   ]) {
     mmVectorFields.push({ type: "filter", path: f });
   }
@@ -158,6 +168,14 @@ async function main() {
           versionGroupId: { type: "token" },
           documentId: { type: "token" },
           sourceFileType: { type: "token" },
+          // FSI EXPANSION: dataset isolation + FSI address fields (lexical arm).
+          metadataType: { type: "token" },
+          raw_address: { type: "string" },
+          district: { type: "token" },
+          estate: { type: "string" },
+          block: { type: "token" },
+          unit_code: { type: "token" },
+          building_name: { type: "string" },
         },
       },
     },
