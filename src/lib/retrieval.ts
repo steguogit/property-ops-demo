@@ -373,6 +373,20 @@ export interface FloorFusionOpts extends HybridOptions {
   unitWeight?: number;
 }
 
+/**
+ * Unit codes are stored in mixed formats across estates: floor-padded ("0803",
+ * "0501") and raw ("803", "501"). Return the equivalent variants so an exact
+ * $match finds the unit regardless of how it was seeded.
+ */
+export function unitCodeVariants(unit: string): string[] {
+  const set = new Set<string>([unit]);
+  // strip ONE leading zero: 0803 -> 803
+  if (/^0\d{3}$/.test(unit)) set.add(unit.replace(/^0/, ""));
+  // add a leading zero for 3-digit codes: 803 -> 0803
+  if (/^\d{3}$/.test(unit)) set.add("0" + unit);
+  return [...set];
+}
+
 export async function buildFloorRankFusionPipeline(
   query: string,
   limit: number,
@@ -397,15 +411,23 @@ export async function buildFloorRankFusionPipeline(
   }
 
   /**
-   * Build a structured "ranked" arm: $match (baseFilter + extra) -> $sort ->
-   * $limit. $rankFusion requires a $sort for a non-search selection pipeline.
+   * Build a BUILDING-ANCHORED structured arm.
+   *
+   * BUG FIX: previously the floor/unit arms were pure $match({floor_num}) /
+   * $match({unit_code}) with NO building constraint, so they voted for EVERY
+   * building's floor-8 / unit-0803 docs — a query for 杭州翠湖花园6栋0803 was
+   * dominated by 上海中海国际's 0803 docs. The building keyword was ignored.
+   *
+   * Fix: anchor each arm with a $search on the query text (matching estate /
+   * building / address fields), so it only ever contains docs from the RIGHT
+   * building; THEN narrow to the exact floor / unit with $match. The $search
+   * relevance ordering also serves as the arm's required ranking.
    */
-  const structuredArm = (
-    extra: Record<string, unknown>,
-    sort: Record<string, 1 | -1>
+  const anchoredArm = (
+    narrow: Record<string, unknown>
   ): Record<string, unknown>[] => [
-    { $match: { ...baseFilter, ...extra } },
-    { $sort: sort },
+    { $search: buildLexicalSearchStage(query) },
+    { $match: { ...baseFilter, ...narrow } },
     { $limit: pool },
   ];
 
@@ -424,21 +446,19 @@ export async function buildFloorRankFusionPipeline(
     lexical: lexicalWeight,
   };
 
-  // Exact-floor arm: only docs on the queried floor get an extra RRF vote.
+  // Exact-floor arm: same building (via $search) AND queried floor.
   if (opts.floor != null) {
-    pipelines.floorExact = structuredArm(
-      { floor_num: opts.floor },
-      { unit_code: 1, _id: 1 }
-    );
+    pipelines.floorExact = anchoredArm({ floor_num: opts.floor });
     weights.floorExact = floorWeight;
   }
 
-  // Exact-unit arm: the queried unit itself gets one more RRF vote -> top.
+  // Exact-unit arm: same building (via $search) AND queried unit.
+  // Unit codes are stored in two formats across estates: floor-padded ("0803")
+  // and raw ("803"). Match BOTH so "0803" also finds "803" and vice-versa.
   if (opts.unit) {
-    pipelines.unitExact = structuredArm(
-      { unit_code: opts.unit },
-      { floor_num: 1, _id: 1 }
-    );
+    pipelines.unitExact = anchoredArm({
+      unit_code: { $in: unitCodeVariants(opts.unit) },
+    });
     weights.unitExact = unitWeight;
   }
 
