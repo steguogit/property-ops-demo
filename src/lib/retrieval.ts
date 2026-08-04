@@ -376,6 +376,103 @@ export async function hybridSearch(
 }
 
 // ---------------------------------------------------------------------------
+// FSI EXPANSION — Hybrid + floor/unit tiering, ALL IN ONE AGGREGATION PIPELINE.
+//
+// Design (customer-requested): do NOT re-rank in application code. In a single
+// aggregation: run hybrid ($rankFusion of vector + lexical) so the building is
+// understood by search; capture the RRF score into a real field; then compute a
+// structured tier from floor_num/unit_code and $sort by { tier, hybridScore }.
+// The building is NEVER matched by regex/name — floor/unit only re-order the
+// hybrid candidates. Works for any language / entity. MongoDB 8.0+.
+// ---------------------------------------------------------------------------
+export interface FloorTierOpts extends HybridOptions {
+  /** Parsed target floor. */
+  floor?: number;
+  /** Parsed target unit; matched tolerantly against padded/raw variants. */
+  unit?: string;
+}
+
+/** Padded/raw unit-code variants so "0803" and "803" are equivalent. */
+export function unitCodeVariants(unit: string): string[] {
+  const set = new Set<string>([unit]);
+  if (/^0\d{3}$/.test(unit)) set.add(unit.replace(/^0+(?=\d)/, ""));
+  if (/^\d{3}$/.test(unit)) set.add("0" + unit);
+  return [...set];
+}
+
+export async function buildFloorTierPipeline(
+  query: string,
+  limit: number,
+  opts: FloorTierOpts = {}
+): Promise<unknown[]> {
+  // Step 1: the standard hybrid pipeline (vector + lexical), minus its trailing
+  // $project — we keep the docs whole so we can tier + sort them below.
+  const hybrid = await buildRankFusionPipeline(query, opts.poolSize ?? 50, {
+    ...opts,
+    poolSize: opts.poolSize ?? 50,
+  });
+  // buildRankFusionPipeline returns [ $rankFusion, $limit, $project ]. Drop the
+  // final $project so we can add fields; keep $rankFusion (+ its inner $limit).
+  const rankFusionStage = hybrid[0];
+
+  const pipeline: unknown[] = [rankFusionStage];
+
+  // Step 2: capture the hybrid RRF score as a real field (so we can sort by it
+  // AFTER re-tiering). $meta:"score" is only readable right after $rankFusion.
+  pipeline.push({ $addFields: { _hybridScore: { $meta: "score" } } });
+
+  // Step 3: compute a structured tier IN-PIPELINE (no app-side JS).
+  //   tier 0: exact floor AND exact unit   (the queried room)
+  //   tier 1: exact floor                  (same-floor neighbours)
+  //   tier 2: everything else
+  if (opts.floor != null) {
+    const branches: Record<string, unknown>[] = [];
+    if (opts.unit) {
+      branches.push({
+        case: {
+          $and: [
+            { $eq: ["$floor_num", opts.floor] },
+            { $in: ["$unit_code", unitCodeVariants(opts.unit)] },
+          ],
+        },
+        then: 0,
+      });
+    }
+    branches.push({ case: { $eq: ["$floor_num", opts.floor] }, then: 1 });
+    pipeline.push({
+      $addFields: { _tier: { $switch: { branches, default: 2 } } },
+    });
+    // Step 4: structured ordering — same-floor/unit first, hybrid score within.
+    pipeline.push({ $sort: { _tier: 1, _hybridScore: -1 } });
+  } else {
+    // No parsed floor: keep pure hybrid order.
+    pipeline.push({ $sort: { _hybridScore: -1 } });
+  }
+
+  pipeline.push({ $limit: limit });
+  pipeline.push({
+    $project: { ...PROJECT, score: "$_hybridScore", _tier: 1 },
+  });
+  return pipeline;
+}
+
+export async function floorTierSearch(
+  query: string,
+  limit = 8,
+  opts: FloorTierOpts = {}
+): Promise<SearchHit[]> {
+  const col = await getCollection();
+  const pipeline = await buildFloorTierPipeline(query, limit, opts);
+  const docs = await col.aggregate(pipeline as Document[]).toArray();
+  return docs.map((d, i) => {
+    const hit = toHit(d, i + 1);
+    hit.score = d.score ?? 0;
+    hit.matchedTerms = matchedTermsFor(query, hit);
+    return hit;
+  });
+}
+
+// ---------------------------------------------------------------------------
 // 3. VECTOR + RERANKER
 // ---------------------------------------------------------------------------
 export async function vectorRerankSearch(

@@ -165,11 +165,11 @@ function scoreInfo(
       return {
         title: "Hybrid + 樓層/單元置頂 · 顯示的是 hybrid RRF 分",
         source:
-          "顯示分數 = 底層 hybrid（$rankFusion 向量+詞法）的 { $meta: \"score\" }（RRF 分）。樓層/單元置頂只是應用層的穩定分組，不改變分數本身。",
+          "顯示分數 = 底層 hybrid（$rankFusion 向量+詞法）的 { $meta: \"score\" }（RRF 分）。在同一條 aggregation 內用 $addFields 存成 _hybridScore；樓層/單元置頂只改排序、不改分數。",
         formula:
-          "排序 = 先按樓層/單元分層（tier 0/1/2），層內按 hybrid RRF 分（穩定排序）。無加分數字。",
+          "排序 = $sort { _tier: 1, _hybridScore: -1 }。_tier 由 $switch 依 floor/unit 算（0/1/2）；層內按 hybrid RRF 分。無加分數字。",
         detail:
-          "大廈由 hybrid（向量語義 + 詞法）理解——不匹配大廈名、不用 regex、多語言通用。之後只在 hybrid 候選集之上，把 floor_num==查詢樓層（且 unit==查詢單元）的文檔穩定置頂；組內保留 hybrid 原排名。顯示的分數即 hybrid RRF 分。",
+          "全部在一條 aggregation pipeline：$rankFusion → $addFields(_hybridScore, _tier) → $sort。大廈由 hybrid（向量語義 + 詞法）理解——不匹配大廈名、不用 regex、多語言通用。樓層/單元只在 DB 內重新排序候選，顯示的分數即 hybrid RRF 分。",
         parts: [
           { label: "hybrid RRF score（= 顯示分數）", value: s },
           { label: "向量檢索通路 · vectorSearchScore（餘弦）", value: v },
@@ -602,56 +602,57 @@ export default function FloorLab() {
         open={floorLogicOpen}
         onClose={() => setFloorLogicOpen(false)}
         title="Hybrid + 樓層/單元置頂 處理邏輯"
-        subtitle="樓層/單元只是「hybrid 候選集之上」的再排序——不匹配大廈名、多語言通用"
+        subtitle="全部在同一條 aggregation pipeline 內完成——不匹配大廈名、多語言通用"
       >
         <div className="explain-section">
-          <h3>① 先跑標準 hybrid 檢索（大廈由此理解）</h3>
+          <h3>① $rankFusion 檢索（大廈由此理解）</h3>
           <div className="explain-note">
             <code>$rankFusion</code> 融合<b>向量 + 詞法</b>兩條通路。
             「翠湖花園」這種大廈／地址語義，<b>完全由 hybrid 理解</b>——
             我們的程式碼<b>不匹配大廈名、不用 regex</b>，換其他 entity
-            或多語言地址一樣可用。hybrid 返回的候選集<b>已經是正確大廈</b>。
+            或多語言地址一樣可用。候選集<b>已經是正確大廈</b>。
           </div>
         </div>
         <div className="explain-section">
-          <h3>② 解析查詢 Parse</h3>
+          <h3>② $addFields：存 RRF 分 + 解析樓層/單元</h3>
           <div className="explain-note">
-            從查詢提取目標 <b>樓層</b> 與 <b>單元號</b>，兼容多種寫法：
-            <br />
-            <code>8樓 / 八樓 / 第8層 / 8F</code> ·{" "}
-            <code>801室 / 801號 / 801單元 / 801</code>
-            <br />
-            當前解析結果：樓層{" "}
+            <code>{'{ $addFields: { _hybridScore: { $meta: "score" } } }'}</code>
+            把 hybrid 的 RRF 分存成真欄位（$meta:&quot;score&quot; 只能緊接
+            $rankFusion 讀取）。查詢的樓層/單元由 parseAddressQuery 解析（兼容
+            8樓/八樓/第8層/801室…）：樓層{" "}
             <b style={{ color: "var(--green)" }}>{data?.parsed?.floor ?? "?"}</b>
             ，單元{" "}
-            <b style={{ color: "var(--green)" }}>{data?.parsed?.unit ?? "?"}</b>
+            <b style={{ color: "var(--green)" }}>{data?.parsed?.unit ?? "?"}</b>。
           </div>
         </div>
         <div className="explain-section">
-          <h3>③ 在候選集之上分組置頂（純結構排序，無 magic number）</h3>
+          <h3>③ $addFields + $sort：結構化分層置頂（在 pipeline 內）</h3>
+          <div className="explain-note" style={{ marginBottom: 8 }}>
+            用 <code>$switch</code> 在 pipeline 內算 <code>_tier</code>，再
+            <code> $sort {'{ _tier: 1, _hybridScore: -1 }'}</code>。全部在 DB 完成，
+            <b>不回應用層排序</b>。
+          </div>
           <div className="feature-list">
             <div className="feature-item">
-              <div className="fname">tier 0 · 精確樓層 + 精確單元</div>
+              <div className="fname">_tier 0 · 精確樓層 + 精確單元</div>
               <div className="fdetail">
-                floor_num == 查詢樓層 <b>且</b> unit == 查詢單元 → 目標房間，最前。
+                floor_num == 查詢樓層 <b>且</b> unit ∈ 單元變體 → 目標房間，最前。
               </div>
             </div>
             <div className="feature-item">
-              <div className="fname">tier 1 · 精確樓層</div>
-              <div className="fdetail">
-                floor_num == 查詢樓層 → 同樓層鄰居，其次。
-              </div>
+              <div className="fname">_tier 1 · 精確樓層</div>
+              <div className="fdetail">floor_num == 查詢樓層 → 同樓層鄰居，其次。</div>
             </div>
             <div className="feature-item">
-              <div className="fname">tier 2 · 其餘</div>
+              <div className="fname">_tier 2 · 其餘</div>
               <div className="fdetail">其他樓層 / 無樓層資訊，排最後。</div>
             </div>
             <div className="feature-item">
-              <div className="fname">組內 tie-break · hybrid 原排名（穩定排序）</div>
+              <div className="fname">tier 內 tie-break · _hybridScore</div>
               <div className="fdetail">
-                每層內部保留 hybrid 原順序（JS Array.sort 穩定排序）。
+                同 tier 內按 hybrid RRF 分排序。
                 <b>沒有 +100/−10 之類加分數字，也沒有樓層距離運算</b>——
-                排序純粹靠離散層級。
+                純靠離散層級 + hybrid 分。
               </div>
             </div>
           </div>
@@ -659,15 +660,16 @@ export default function FloorLab() {
         <div className="explain-section">
           <h3>④ 為什麼這樣設計 Why</h3>
           <div className="explain-note">
-            大廈由 hybrid（向量語義 + 詞法）自己理解，<b>樓層/單元只是候選集之上的
-            再排序</b>，不參與檢索、不碰大廈名。這樣換成其他 entity
-            或多語言地址都能用。<br />
+            <b>全部在一條 aggregation pipeline</b>：$rankFusion →
+            $addFields（_hybridScore + _tier）→ $sort。樓層/單元置頂在 DB 內完成，
+            不回應用層。<br />
+            大廈由 hybrid（向量語義 + 詞法）自己理解，<b>樓層/單元只重新排序候選</b>，
+            不參與檢索、不碰大廈名——換其他 entity 或多語言都能用。<br />
             舊版把樓層/單元做成獨立 <code>$rankFusion</code> 通路（對全 collection
             $match 同樓層/同單元）是錯的：它會投票給<b>其他大廈</b>的同樓層文檔，
-            令「翠湖花園」這種關鍵字被忽略（查 杭州翠湖花園0803 反而返回 上海中海國際）。
-            <br />
-            單元號有補零（0803）與不補零（803）兩種寫法，比較時做正規化（去前導零），
-            屬<b>資料正規化</b>、非排序權重。
+            令「翠湖花園」被忽略（查 杭州翠湖花園0803 反而返回 上海中海國際）。<br />
+            單元號有補零（0803）與不補零（803），<code>$switch</code> 用{" "}
+            <code>$in</code> 同時匹配兩種寫法，屬<b>資料正規化</b>、非排序權重。
           </div>
         </div>
       </Modal>
@@ -684,7 +686,8 @@ export default function FloorLab() {
           <div className="explain-note">
             本欄與 Baseline · Hybrid <b>用同一個 hybrid 檢索</b>（$rankFusion
             融合向量 + 詞法），候選集一模一樣、大廈都正確。差別只在於：本欄在
-            <b>候選集之上多做一步樓層/單元分組置頂</b>。
+            <b>同一條 pipeline 內、$rankFusion 之後再接 $addFields + $sort</b>，
+            做樓層/單元分組置頂。
           </div>
         </div>
         <div className="explain-section">
@@ -699,9 +702,10 @@ export default function FloorLab() {
         <div className="explain-section">
           <h3>③ 本欄如何解決</h3>
           <div className="explain-note">
-            在<b>同一個 hybrid 候選集之上</b>，把 floor_num == 查詢樓層 的文檔
-            <b>穩定分組置頂</b>（tier 0/1/2），組內保留 hybrid 原排名。
-            非同樓層文檔整批降到後面，同樓層文檔整批升到前面。
+            在同一條 pipeline 內，$rankFusion 之後用 <code>$addFields</code> 算
+            <code> _tier</code>，再 <code>$sort {'{ _tier, _hybridScore }'}</code>。
+            floor_num == 查詢樓層 的文檔整批置頂（tier 0/1/2），tier 內按 hybrid
+            RRF 分。
             <span style={{ color: "var(--green)" }}>
               {" "}
               top5 純度 5/5
@@ -711,7 +715,8 @@ export default function FloorLab() {
         </div>
         <div className="explain-note" style={{ marginTop: 8 }}>
           <b>一句話：</b>不是換了更強的檢索，而是承認「樓層是結構化欄位、不是語義」，
-          於是在 hybrid 候選集之上用<b>純結構的分組排序</b>把同樓層文檔置頂——
+          於是在同一條 aggregation pipeline 內、$rankFusion 之後用
+          <b>結構化 $addFields + $sort</b> 把同樓層文檔置頂——
           不碰大廈名、無 magic number、多語言通用。
         </div>
       </Modal>
