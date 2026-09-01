@@ -18,6 +18,15 @@ import {
 import { detectConflictsAgainst, scopesOverlap } from "../src/lib/conflict-detection";
 import { buildTrace } from "../src/lib/policy-trace";
 import { KnowledgePolicy } from "../src/lib/mongo";
+import {
+  findHandwrittenNameCandidates,
+  findHandwrittenNameClusters,
+  clusterCandidates,
+  buildFullTextFromBlocks,
+  reorderOcrBlocks,
+  HANDWRITING_ILLEGIBLE,
+  type OcrBlock,
+} from "../src/lib/ocrUtils";
 
 // ---------------------------------------------------------------------------
 // Fixtures — pure, no DB.
@@ -281,6 +290,116 @@ describe("policy trace", () => {
     assertIncludes(trace.detectedTerms ?? [], "關水喉", "trace detected term");
     assertEqual(trace.retrievalAdjustments.boostedDocumentIds, ["SOP-1"], "trace boost");
     assert(trace.explanation.includes("關水喉"), "explanation mentions the term");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Handwritten-name candidate detection (HK tenancy multilingual signatures).
+// A 1000x1400 "page": printed body top-left, a rotated signature top-right,
+// and a low-confidence handwritten name in the footer signature area.
+// ---------------------------------------------------------------------------
+
+function block(
+  cx: number,
+  cy: number,
+  w: number,
+  h: number,
+  extra: Partial<OcrBlock>
+): OcrBlock {
+  const x0 = cx - w / 2;
+  const y0 = cy - h / 2;
+  const x1 = cx + w / 2;
+  const y1 = cy + h / 2;
+  return {
+    bbox: [
+      [x0, y0],
+      [x1, y0],
+      [x1, y1],
+      [x0, y1],
+    ],
+    direction: h > w * 1.5 ? "vertical" : "horizontal",
+    text: extra.text ?? "x",
+    confidence: extra.confidence ?? 0.99,
+    angle: extra.angle,
+    ...extra,
+  };
+}
+
+describe("findHandwrittenNameCandidates (LABEL-ANCHORED)", () => {
+  // Real HK forms are typeset VERTICALLY (angle=90 everywhere) and printed body
+  // text is only medium confidence — so we anchor on printed LABELS and take the
+  // adjacent block as the handwritten name.
+
+  it("flags the block adjacent to a 業主 label", () => {
+    const label = block(850, 120, 40, 60, { text: "業主：", confidence: 0.9, angle: 90 });
+    const name = block(850, 220, 40, 160, { text: "陳藝森", confidence: 0.76, angle: 90 });
+    const body = block(400, 700, 40, 300, { text: "租客不得分租", confidence: 0.88, angle: 90 });
+    const idx = findHandwrittenNameCandidates([label, name, body]);
+    assertIncludes(idx, 1, "name next to 業主 label");
+    assert(!idx.includes(2), "far-away printed body excluded");
+  });
+
+  it("flags the block adjacent to a 租客 label", () => {
+    const label = block(850, 120, 40, 60, { text: "租客", confidence: 0.9, angle: 90 });
+    const name = block(850, 210, 40, 140, { text: "劉劍舞", confidence: 0.7, angle: 90 });
+    const idx = findHandwrittenNameCandidates([label, name]);
+    assertIncludes(idx, 1, "name next to 租客 label");
+  });
+
+  it("flags a merged label+name block (業主：陈藝森)", () => {
+    const merged = block(760, 90, 520, 100, { text: "業主：陈藝森", confidence: 0.76, angle: 90 });
+    const idx = findHandwrittenNameCandidates([merged]);
+    assertIncludes(idx, 0, "merged label+name block is itself a candidate");
+  });
+
+  it("does NOT flag printed body text with no nearby label", () => {
+    const body1 = block(400, 700, 40, 300, { text: "租客不得分租另將樓宇", confidence: 0.88, angle: 90 });
+    const body2 = block(500, 700, 40, 300, { text: "業主有合法權利將此", confidence: 0.89, angle: 90 });
+    const idx = findHandwrittenNameCandidates([body1, body2]);
+    assertEqual(idx, [], "no bare label -> no candidates");
+  });
+
+  it("returns [] for empty input", () => {
+    assertEqual(findHandwrittenNameCandidates([]), [], "empty in, empty out");
+  });
+});
+
+describe("clusterCandidates (whole-name grouping)", () => {
+  it("merges adjacent single-glyph name blocks into ONE cluster", () => {
+    // A 業主 label with the name split into 3 adjacent glyph blocks.
+    const label = block(850, 60, 40, 50, { text: "業主", confidence: 0.9, angle: 90 });
+    const g1 = block(850, 120, 40, 44, { text: "陈", confidence: 0.7, angle: 90 });
+    const g2 = block(850, 165, 40, 44, { text: "藝", confidence: 0.7, angle: 90 });
+    const g3 = block(850, 210, 40, 44, { text: "森", confidence: 0.7, angle: 90 });
+    const clusters = findHandwrittenNameClusters([label, g1, g2, g3]);
+    assertEqual(clusters.length, 1, "adjacent name glyphs -> 1 cluster");
+    assert(clusters[0].memberIndices.length >= 1, "cluster has members");
+  });
+});
+
+describe("handwriting back-fill + fullText assembly", () => {
+  it("uses the corrected name in fullText after a candidate is back-filled", () => {
+    const sig = block(850, 120, 60, 180, {
+      text: "??",
+      confidence: 0.5,
+      angle: 90,
+    });
+    // Simulate the multimodal pass back-filling the block text.
+    sig.text = "陳大文";
+    sig.handwritten = true;
+    const ordered = reorderOcrBlocks([sig]);
+    assertIncludes(
+      buildFullTextFromBlocks(ordered).split("\n"),
+      "陳大文",
+      "corrected name feeds fullText"
+    );
+  });
+
+  it("illegible placeholder is a stable, non-empty CJK marker", () => {
+    assert(
+      HANDWRITING_ILLEGIBLE.length > 0 && HANDWRITING_ILLEGIBLE.includes("手寫"),
+      "placeholder is the expected marker"
+    );
   });
 });
 

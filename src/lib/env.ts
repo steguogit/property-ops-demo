@@ -124,6 +124,24 @@ export const env = {
   // Optional override for the PaddleOCR ONNX models directory (contains
   // ch_PP-OCRv4_det_infer.onnx, ch_PP-OCRv4_rec_infer.onnx, ppocr_keys_v1.txt).
   onnxOcrModelsDir: process.env.ONNX_OCR_MODELS_DIR ?? "",
+  // ----- External PaddleOCR HTTP microservice (backend-separated OCR) -----
+  // When enabled, image OCR is delegated to the standalone Python FastAPI
+  // PaddleOCR service (./ocr-service). It returns layout blocks with direction,
+  // which the Node side reorders (right-to-left / top-to-bottom for vertical
+  // Chinese) so mixed horizontal+vertical handwriting keeps the correct reading
+  // order for embeddings. If the service is unreachable, ingestion falls back to
+  // the existing local OCR (Tesseract / ONNX / vision) automatically.
+  useExternalPaddleOcr:
+    (process.env.USE_EXTERNAL_PADDLE_OCR ?? "false").toLowerCase() === "true",
+  // Full URL to the OCR service's /ocr endpoint. The port is NOT hard-coded
+  // (8000 is used by another local demo). Local dev default targets 127.0.0.1;
+  // in Docker set this to http://host.docker.internal:<port>/ocr.
+  ocrServiceUrl: process.env.OCR_SERVICE_URL ?? "http://127.0.0.1:8001/ocr",
+  // Timeout (ms) for a single OCR HTTP call before falling back to local OCR.
+  ocrServiceTimeoutMs: parseInt(
+    process.env.OCR_SERVICE_TIMEOUT_MS ?? "60000",
+    10
+  ),
   // Whether scanned/image-only PDFs are OCR'd (local) on upload so their text is
   // keyword-searchable. Default true. Set false to defer OCR (image-embed only).
   pdfOcrOnUpload:
@@ -187,6 +205,11 @@ export function assertMongo() {
 
 export function hasVoyage() {
   return Boolean(env.voyageApiKey);
+}
+
+/** Whether the external PaddleOCR HTTP microservice is enabled + configured. */
+export function hasExternalPaddleOcr() {
+  return env.useExternalPaddleOcr && Boolean(env.ocrServiceUrl);
 }
 
 export function hasReranker() {

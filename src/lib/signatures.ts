@@ -1,9 +1,10 @@
 import { Readable } from "stream";
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 import {
   getSignaturesCollection,
   getFileBucket,
   deleteOriginalFile,
+  getDb,
   SignatureDoc,
 } from "./mongo";
 import { env } from "./env";
@@ -115,16 +116,113 @@ export interface DetectStep {
 }
 
 export interface DetectResult {
+  /**
+   * Primary (best) detected signature region, or null if none.
+   * Kept for backward compatibility with callers/UI that expect a single box —
+   * it always mirrors cropRects[0].
+   */
   cropRect: CropRect | null;
+  /**
+   * ALL detected signature regions (stabilised + ordered top→bottom,
+   * left→right). Empty when none found. A document may contain more than one
+   * handwritten signature (e.g. tenant + landlord), so callers can offer the
+   * user a choice of which region to enrol/compare.
+   */
+  cropRects: CropRect[];
   steps: DetectStep[];
   /** Raw model output (trimmed) for transparency. */
   rawResponse?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Detection cache.
+//
+// The vision model is non-deterministic for spatial localization (see the
+// `seed`/quantization notes below), so the SAME uploaded image can yield a
+// different box — and therefore a different comparison SCORE — on each call.
+// To make detection reproducible we key a tiny cache by the SHA-256 of the
+// image bytes: the first detection for an image is stabilised and stored; every
+// later detection of the identical image returns that exact box. This removes
+// the run-to-run variance the user observed.
+// ---------------------------------------------------------------------------
+const DETECT_CACHE_COLLECTION = "signature_detect_cache";
+
+function imageHash(buffer: Buffer): string {
+  return createHash("sha256").update(buffer).digest("hex");
+}
+
+async function getCachedDetection(
+  hash: string
+): Promise<CropRect[] | undefined> {
+  try {
+    const db = await getDb();
+    const doc = await db
+      .collection(DETECT_CACHE_COLLECTION)
+      .findOne({ _id: hash } as any);
+    if (!doc) return undefined; // no entry => cache miss
+    const d = doc as any;
+    // New format: cropRects[] (may be []). Fall back to legacy single cropRect.
+    if (Array.isArray(d.cropRects)) return d.cropRects as CropRect[];
+    if (d.cropRect) return [d.cropRect as CropRect];
+    return []; // cached "no signature"
+  } catch {
+    return undefined; // cache is best-effort; never block detection
+  }
+}
+
+async function putCachedDetection(
+  hash: string,
+  cropRects: CropRect[]
+): Promise<void> {
+  try {
+    const db = await getDb();
+    await db.collection(DETECT_CACHE_COLLECTION).updateOne(
+      { _id: hash } as any,
+      {
+        // Store the array; also mirror the primary box in `cropRect` so any
+        // legacy reader still works.
+        $set: {
+          cropRects,
+          cropRect: cropRects[0] ?? null,
+          updatedAt: new Date(),
+        },
+      },
+      { upsert: true }
+    );
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Pad + quantize a single raw box for run-to-run stability (see notes below). */
+function stabilizeBox(
+  rawX: number,
+  rawY: number,
+  rawW: number,
+  rawH: number
+): CropRect {
+  const PAD = 0.03; // fractional padding added on every side
+  const GRID = 0.05; // quantization grid
+  const snap = (n: number) => Math.round(n / GRID) * GRID;
+  const px = Math.max(0, rawX - PAD);
+  const py = Math.max(0, rawY - PAD);
+  const pw = Math.min(1 - px, rawW + 2 * PAD);
+  const ph = Math.min(1 - py, rawH + 2 * PAD);
+  const x = Math.min(Math.max(snap(px), 0), 1);
+  const y = Math.min(Math.max(snap(py), 0), 1);
+  const w = Math.min(Math.max(snap(pw), GRID), 1 - x);
+  const h = Math.min(Math.max(snap(ph), GRID), 1 - y);
+  return { x, y, w, h };
 }
 
 /**
  * Auto-detect the signature region in an image via the vision LLM. Returns a
  * normalized crop rect (0..1) plus a step-by-step trace of what happened, so the
  * UI can show the process. Best-effort — the UI lets the user adjust the box.
+ *
+ * Determinism: results are cached by image hash so repeated detection of the
+ * SAME image is 100% consistent. The raw model box is also padded + quantized
+ * (see below) so even a first-time detection is stable to small model jitter.
  */
 export async function detectSignatureRegion(
   buffer: Buffer,
@@ -158,13 +256,41 @@ export async function detectSignatureRegion(
       note: "No vision LLM configured (LLM_API_KEY unset).",
       noteKey: "sig.proc.noModel",
     });
-    return { cropRect: null, steps };
+    return { cropRect: null, cropRects: [], steps };
   }
+
+  // Step 0: cache lookup by image hash — makes repeat detection deterministic.
+  const hash = imageHash(buffer);
+  const endCache = timer("Check detection cache", "sig.proc.cache");
+  const cached = await getCachedDetection(hash);
+  if (cached !== undefined) {
+    endCache(
+      "ok",
+      `returned ${cached.length} previously stabilised box(es) for this exact image`,
+      "sig.proc.cacheHit",
+      { count: cached.length }
+    );
+    return { cropRect: cached[0] ?? null, cropRects: cached, steps };
+  }
+  endCache("ok", "no cached box; running the vision model", "sig.proc.cacheMiss");
 
   // Step 1: prepare image.
   const endPrep = timer("Prepare image", "sig.proc.prepare");
   const b64 = buffer.toString("base64");
   const kb = Math.round(buffer.length / 1024);
+  // Grab the pixel dimensions so we can normalise the model's box if it returns
+  // ABSOLUTE PIXEL coordinates instead of the requested 0..1 fractions (it does
+  // this inconsistently, especially on smaller images — see the parse step).
+  let imgW = 0;
+  let imgH = 0;
+  try {
+    const canvas = await import("@napi-rs/canvas");
+    const img = await canvas.loadImage(buffer);
+    imgW = img.width;
+    imgH = img.height;
+  } catch {
+    /* dimensions best-effort; fraction-only handling still works */
+  }
   endPrep(
     "ok",
     `${mime}, ${kb} KB → base64 data URI (detail: high)`,
@@ -190,20 +316,31 @@ export async function detectSignatureRegion(
       headers,
       body: JSON.stringify({
         model: env.llmModel,
+        // Determinism: without this, the model returns a slightly different
+        // bounding box on every call, which shifts the crop and makes the
+        // comparison SCORE wobble run-to-run. We pin a fixed `seed` so the same
+        // image yields the same box (and thus a stable score).
+        // NB: this model (gpt-5.x) REJECTS a non-default `temperature` with HTTP
+        // 400 (verified against the gateway), so we must NOT send temperature —
+        // `seed` is the only determinism lever available here.
+        seed: 42,
         messages: [
           {
             role: "system",
             content:
-              "You locate the handwritten signature in a scanned document image. " +
-              "Return ONLY a compact JSON object with the bounding box of the signature as fractions of the image dimensions (0..1): " +
-              '{"x":<left>,"y":<top>,"w":<width>,"h":<height>}. ' +
-              "The box should tightly enclose the handwritten signature strokes, excluding printed labels like 'Signature:'. " +
-              'If there is no handwritten signature, return {"none":true}. Output JSON only, no prose.',
+              "You locate EVERY handwritten signature in a scanned document image. " +
+              "A document may contain more than one signature (e.g. tenant AND landlord, or multiple signatories). " +
+              "Return ONLY a compact JSON object of the form " +
+              '{"boxes":[{"x":<left>,"y":<top>,"w":<width>,"h":<height>}, ...]} ' +
+              "where each box is the bounding box of ONE signature as fractions of the image dimensions (0..1). " +
+              "Each box should tightly enclose that signature's handwritten strokes, excluding printed labels like 'Signature:'. " +
+              "Do NOT include printed/typeset text, stamps of printed characters, or vertical printed column headers — only genuine handwritten signatures. " +
+              'If there are no handwritten signatures, return {"boxes":[]}. Output JSON only, no prose.',
           },
           {
             role: "user",
             content: [
-              { type: "text", text: "Find the handwritten signature region." },
+              { type: "text", text: "Find all handwritten signature regions." },
               {
                 type: "image_url",
                 image_url: { url: `data:${mime};base64,${b64}`, detail: "high" },
@@ -218,7 +355,7 @@ export async function detectSignatureRegion(
         status: res.status,
         model: env.llmModel,
       });
-      return { cropRect: null, steps };
+      return { cropRect: null, cropRects: [], steps };
     }
     const json = (await res.json()) as {
       choices: { message: { content: string } }[];
@@ -231,62 +368,144 @@ export async function detectSignatureRegion(
     endCall("error", (e as Error).message, "sig.proc.callFailed", {
       msg: (e as Error).message,
     });
-    return { cropRect: null, steps };
+    return { cropRect: null, cropRects: [], steps };
   }
 
-  // Step 3: parse the bounding box.
-  const endParse = timer("Parse bounding box", "sig.proc.parse");
+  // Step 3: parse the bounding box(es).
+  const endParse = timer("Parse bounding boxes", "sig.proc.parse");
   const m = raw.match(/\{[\s\S]*\}/);
   if (!m) {
     endParse("warn", "no JSON found in model output", "sig.proc.noJson");
-    return { cropRect: null, steps, rawResponse: raw.slice(0, 400) };
+    return { cropRect: null, cropRects: [], steps, rawResponse: raw.slice(0, 400) };
   }
   try {
     const parsed = JSON.parse(m[0]);
-    if (parsed.none) {
+
+    // Accept several shapes for robustness:
+    //   { "boxes": [ {x,y,w,h}, ... ] }   (new, preferred)
+    //   { "none": true }                  (legacy "no signature")
+    //   { x,y,w,h }                       (legacy single box)
+    let rawBoxes: any[] = [];
+    if (Array.isArray(parsed.boxes)) rawBoxes = parsed.boxes;
+    else if (parsed.none) rawBoxes = [];
+    else if (typeof parsed.x === "number") rawBoxes = [parsed];
+
+    // The model is asked for FRACTIONS (0..1) but inconsistently returns
+    // ABSOLUTE PIXEL coordinates instead (more often on smaller images). If we
+    // treated pixels as fractions they'd clamp to the image edge and collapse
+    // together — which is exactly why some documents (e.g. a low-res photo)
+    // yielded only ONE region. Detect the unit PER RESPONSE: if any coordinate
+    // exceeds ~1.5, the whole response is pixels, so divide by the image
+    // dimensions to recover fractions.
+    const looksPixel = rawBoxes.some((b) =>
+      [b?.x, b?.y, b?.w, b?.h].some((n) => Number(n) > 1.5)
+    );
+    const toFraction = (b: any) => {
+      const x = Number(b?.x);
+      const y = Number(b?.y);
+      const w = Number(b?.w);
+      const h = Number(b?.h);
+      if (looksPixel && imgW > 0 && imgH > 0) {
+        return { x: x / imgW, y: y / imgH, w: w / imgW, h: h / imgH };
+      }
+      return { x, y, w, h };
+    };
+
+    // Keep only boxes with valid, non-degenerate numbers, then stabilise each.
+    const stabilized: CropRect[] = [];
+    for (const b of rawBoxes) {
+      const { x: rawX, y: rawY, w: rawW, h: rawH } = toFraction(b);
+      if ([rawX, rawY, rawW, rawH].some((n) => Number.isNaN(n))) continue;
+      if (rawW <= 0.005 || rawH <= 0.005) continue; // ignore slivers
+      // Stabilise each box. This model rejects temperature:0 (HTTP 400) and
+      // treats `seed` as best-effort, so the RAW box drifts by up to ~8% between
+      // identical calls — which shifts the crop and makes the comparison SCORE
+      // inconsistent. stabilizeBox() PADS (so edge strokes stay inside the crop)
+      // and SNAPS to a coarse 0.05 grid (so wobble collapses onto the same box).
+      stabilized.push(stabilizeBox(rawX, rawY, rawW, rawH));
+    }
+
+    // De-duplicate boxes that quantized to (nearly) the same rectangle — the
+    // model sometimes returns the same signature twice, or two boxes that snap
+    // together. Then order top→bottom, left→right for stable, human presentation.
+    const boxes = dedupeBoxes(stabilized).sort((a, b) =>
+      Math.abs(a.y - b.y) > 0.05 ? a.y - b.y : a.x - b.x
+    );
+
+    if (boxes.length === 0) {
       endParse(
         "warn",
         "model reported no handwritten signature",
         "sig.proc.noneFound"
       );
-      return { cropRect: null, steps, rawResponse: m[0] };
+      await putCachedDetection(hash, []); // cache the "none" verdict
+      return { cropRect: null, cropRects: [], steps, rawResponse: m[0] };
     }
-    const x = Number(parsed.x);
-    const y = Number(parsed.y);
-    const w = Number(parsed.w);
-    const h = Number(parsed.h);
-    if ([x, y, w, h].some((n) => Number.isNaN(n))) {
-      endParse("warn", "bounding box was not valid numbers", "sig.proc.badBox");
-      return { cropRect: null, steps, rawResponse: m[0] };
-    }
+
     endParse(
       "ok",
-      `box x:${x.toFixed(2)} y:${y.toFixed(2)} w:${w.toFixed(
-        2
-      )} h:${h.toFixed(2)} (fractions of the page)`,
-      "sig.proc.boxNote",
-      {
-        x: x.toFixed(2),
-        y: y.toFixed(2),
-        w: w.toFixed(2),
-        h: h.toFixed(2),
-      }
+      `found ${boxes.length} signature region(s)`,
+      "sig.proc.boxesNote",
+      { count: boxes.length }
     );
     steps.push({
       step: "Crop → embed (on enrol/compare)",
       stepKey: "sig.proc.embed",
       status: "ok",
       note:
-        "Only this region is cropped and embedded with " +
+        "Each selected region is cropped and embedded with " +
         `${env.multimodalEmbedModel} into a 1024-d vector.`,
       noteKey: "sig.proc.embedNote",
       vars: { model: env.multimodalEmbedModel },
     });
-    return { cropRect: { x, y, w, h }, steps, rawResponse: m[0] };
+    // Persist the stabilised boxes so every later detection of this exact image
+    // returns the identical regions (and thus identical comparison scores).
+    await putCachedDetection(hash, boxes);
+    return { cropRect: boxes[0], cropRects: boxes, steps, rawResponse: m[0] };
   } catch {
     endParse("warn", "failed to parse model JSON", "sig.proc.parseFailed");
-    return { cropRect: null, steps, rawResponse: raw.slice(0, 400) };
+    return { cropRect: null, cropRects: [], steps, rawResponse: raw.slice(0, 400) };
   }
+}
+
+/** Intersection-over-Union of two normalized boxes (0 = disjoint, 1 = identical). */
+function iou(a: CropRect, b: CropRect): number {
+  const ax2 = a.x + a.w;
+  const ay2 = a.y + a.h;
+  const bx2 = b.x + b.w;
+  const by2 = b.y + b.h;
+  const ix = Math.max(0, Math.min(ax2, bx2) - Math.max(a.x, b.x));
+  const iy = Math.max(0, Math.min(ay2, by2) - Math.max(a.y, b.y));
+  const inter = ix * iy;
+  const union = a.w * a.h + b.w * b.h - inter;
+  return union <= 0 ? 0 : inter / union;
+}
+
+/**
+ * Merge boxes that refer to the SAME signature, keeping genuinely-separate ones.
+ * The model often returns two overlapping boxes for one signature (a tall + a
+ * short fragment). Position/size closeness misses those (they can be shifted),
+ * so we merge by OVERLAP: if two boxes have IoU >= 0.4 we treat them as the same
+ * signature and keep their UNION (so the whole signature is captured). Boxes
+ * that barely overlap are kept separate (e.g. tenant vs landlord).
+ */
+function dedupeBoxes(boxes: CropRect[]): CropRect[] {
+  const out: CropRect[] = [];
+  for (const b of boxes) {
+    const hitIndex = out.findIndex((o) => iou(o, b) >= 0.4);
+    if (hitIndex === -1) {
+      out.push(b);
+    } else {
+      // Merge into the union of the two overlapping boxes.
+      const o = out[hitIndex];
+      const x = Math.min(o.x, b.x);
+      const y = Math.min(o.y, b.y);
+      const w = Math.max(o.x + o.w, b.x + b.w) - x;
+      const h = Math.max(o.y + o.h, b.y + b.h) - y;
+      out[hitIndex] = { x, y, w, h };
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -565,6 +784,34 @@ export async function enrollSignature(input: {
   return doc;
 }
 
+/**
+ * Enrol MULTIPLE signature regions from a single document in one call — each
+ * region becomes its own specimen (its own embedding + signer name), so a form
+ * signed by e.g. a tenant AND a landlord yields two independently-matchable
+ * specimens. Regions with a blank signer name are skipped.
+ */
+export async function enrollSignatureRegions(input: {
+  buffer: Buffer;
+  mime: string;
+  fileName: string;
+  regions: Array<{ signerName: string; label?: string; cropRect: CropRect }>;
+}): Promise<SignatureDoc[]> {
+  const out: SignatureDoc[] = [];
+  for (const r of input.regions) {
+    if (!r.signerName?.trim()) continue; // skip unnamed regions
+    const doc = await enrollSignature({
+      buffer: input.buffer,
+      mime: input.mime,
+      fileName: input.fileName,
+      signerName: r.signerName,
+      label: r.label,
+      cropRect: r.cropRect,
+    });
+    out.push(doc);
+  }
+  return out;
+}
+
 export async function listSignatures(): Promise<SignatureDoc[]> {
   const col = await getSignaturesCollection();
   return col
@@ -591,6 +838,20 @@ export async function compareSignature(
   limit = 5,
   cropRect?: CropRect | null
 ): Promise<{ matches: SignatureMatch[]; queryEmbedded: boolean }> {
+  const matches = await matchOneRegion(buffer, mime, cropRect ?? null, limit);
+  return { matches, queryEmbedded: true };
+}
+
+/**
+ * Embed ONE region of the query image and vector-search the enrolled specimens.
+ * Shared by both the single-region compare and the per-region multi-compare.
+ */
+async function matchOneRegion(
+  buffer: Buffer,
+  mime: string,
+  cropRect: CropRect | null,
+  limit: number
+): Promise<SignatureMatch[]> {
   const col = await getSignaturesCollection();
   // Crop the query to its signature region too, so we compare signature-to-
   // signature (matching how enrolled specimens were embedded).
@@ -631,7 +892,7 @@ export async function compareSignature(
   ];
 
   const docs = await col.aggregate(pipeline).toArray();
-  const matches: SignatureMatch[] = docs.map((d: any) => ({
+  return docs.map((d: any) => ({
     signatureId: d.signatureId,
     signerName: d.signerName,
     label: d.label,
@@ -641,6 +902,67 @@ export async function compareSignature(
     similarity: d.similarity ?? 0,
     band: bandFor(d.similarity ?? 0),
   }));
+}
 
-  return { matches, queryEmbedded: true };
+/** A comparison result for ONE detected region of the query document. */
+export interface RegionCompareResult {
+  /** 1-based index of the region within the query document. */
+  regionIndex: number;
+  /** The region that was embedded (for UI overlay). */
+  cropRect: CropRect;
+  /** Ranked matches for THIS region (best first). */
+  matches: SignatureMatch[];
+  /** Convenience: the single best match (matches[0]) or null. */
+  best: SignatureMatch | null;
+}
+
+/**
+ * Compare EVERY detected signature region of a query document against the
+ * enrolled specimens, returning the best match PER REGION. This is the natural
+ * model for a real scenario: the user doesn't know which enrolled specimen a
+ * document's signatures should map to — vector search finds the best match for
+ * each region automatically (e.g. region 1 → Tenant 0.94, region 2 → Landlord
+ * 0.91). If no regions are supplied we fall back to auto-detecting them.
+ */
+export async function compareSignatureRegions(
+  buffer: Buffer,
+  mime: string,
+  regions?: CropRect[] | null,
+  limit = 5
+): Promise<{ regions: RegionCompareResult[]; detected: boolean }> {
+  let boxes = regions ?? null;
+  let detected = false;
+  if (!boxes || boxes.length === 0) {
+    const det = await detectSignatureRegion(buffer, mime);
+    boxes = det.cropRects;
+    detected = true;
+  }
+  // No region at all: compare the whole image as a single implicit region so
+  // the caller still gets a result.
+  if (!boxes || boxes.length === 0) {
+    const matches = await matchOneRegion(buffer, mime, null, limit);
+    return {
+      regions: [
+        {
+          regionIndex: 1,
+          cropRect: { x: 0, y: 0, w: 1, h: 1 },
+          matches,
+          best: matches[0] ?? null,
+        },
+      ],
+      detected,
+    };
+  }
+
+  const results: RegionCompareResult[] = [];
+  for (let i = 0; i < boxes.length; i++) {
+    const matches = await matchOneRegion(buffer, mime, boxes[i], limit);
+    results.push({
+      regionIndex: i + 1,
+      cropRect: boxes[i],
+      matches,
+      best: matches[0] ?? null,
+    });
+  }
+  return { regions: results, detected };
 }

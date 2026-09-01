@@ -151,6 +151,15 @@ async function main() {
     name: env.searchIndex,
     type: "search",
     definition: {
+      // Custom Latin analyzer for handwritten English names (lowercase + fold
+      // accents). CJK names use the built-in lucene.cjk analyzer (bigrams).
+      analyzers: [
+        {
+          name: "hw_name_en",
+          tokenizer: { type: "standard" },
+          tokenFilters: [{ type: "lowercase" }, { type: "asciiFolding" }],
+        },
+      ],
       mappings: {
         dynamic: false,
         fields: {
@@ -176,6 +185,22 @@ async function main() {
           block: { type: "token" },
           unit_code: { type: "token" },
           building_name: { type: "string" },
+          // Multilingual handwritten-name recall (HK tenancy signatures). The
+          // nameText is indexed with a CJK analyzer AND a Latin multi-analyzer
+          // so a tenancy is found by the tenant's Chinese OR English name.
+          extractedHandwrittenNames: {
+            type: "document",
+            fields: {
+              nameText: {
+                type: "string",
+                analyzer: "lucene.cjk",
+                multi: {
+                  en: { type: "string", analyzer: "hw_name_en" },
+                },
+              },
+              lang: { type: "token" },
+            },
+          },
         },
       },
     },

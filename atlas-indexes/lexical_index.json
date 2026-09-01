@@ -1,5 +1,12 @@
 {
-  "_comment": "Atlas Search (lexical) index. Create in Atlas UI: Database > Search > Create Index > JSON Editor > Atlas Search. Index name MUST match ATLAS_SEARCH_INDEX (default 'lexical_index'). Drives BM25-style lexical retrieval over chunk text + exact entity/alias fields for hybrid search.",
+  "_comment": "Atlas Search (lexical) index. Create in Atlas UI: Database > Search > Create Index > JSON Editor > Atlas Search. Index name MUST match ATLAS_SEARCH_INDEX (default 'lexical_index'). Drives BM25-style lexical retrieval over chunk text + exact entity/alias fields for hybrid search. `extractedHandwrittenNames.nameText` is indexed with BOTH a CJK-aware analyzer and a Latin analyzer (multi) so a tenant is recalled by their handwritten Chinese OR English name.",
+  "analyzers": [
+    {
+      "name": "hw_name_en",
+      "tokenizer": { "type": "standard" },
+      "tokenFilters": [{ "type": "lowercase" }, { "type": "asciiFolding" }]
+    }
+  ],
   "mappings": {
     "dynamic": false,
     "fields": {
@@ -15,7 +22,20 @@
       "versionLabel": { "type": "token" },
       "versionGroupId": { "type": "token" },
       "documentId": { "type": "token" },
-      "sourceFileType": { "type": "token" }
+      "sourceFileType": { "type": "token" },
+      "extractedHandwrittenNames": {
+        "type": "document",
+        "fields": {
+          "nameText": {
+            "type": "string",
+            "analyzer": "lucene.cjk",
+            "multi": {
+              "en": { "type": "string", "analyzer": "hw_name_en" }
+            }
+          },
+          "lang": { "type": "token" }
+        }
+      }
     }
   }
 }

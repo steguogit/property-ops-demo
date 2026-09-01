@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { enrollSignature, listSignatures } from "@/lib/signatures";
+import {
+  enrollSignature,
+  enrollSignatureRegions,
+  listSignatures,
+} from "@/lib/signatures";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -13,7 +17,14 @@ export async function GET() {
   }
 }
 
-/** Enrol a reference signature (multipart: file + signerName + optional label). */
+/**
+ * Enrol reference signature(s) (multipart).
+ *
+ * Two modes:
+ *   - MULTI:  `regions` = JSON array of { signerName, label?, cropRect } →
+ *             each region becomes its own specimen (tenant + landlord, etc.).
+ *   - SINGLE: legacy `signerName` + optional `label` + optional `cropRect`.
+ */
 export async function POST(req: NextRequest) {
   try {
     const form = await req.formData();
@@ -21,6 +32,59 @@ export async function POST(req: NextRequest) {
     if (!file || typeof file === "string") {
       return NextResponse.json({ error: "file is required" }, { status: 400 });
     }
+    const f = file as File;
+    const buffer = Buffer.from(await f.arrayBuffer());
+    const mime = f.type || "image/png";
+    if (!mime.startsWith("image/")) {
+      return NextResponse.json(
+        { error: "file must be an image" },
+        { status: 400 }
+      );
+    }
+
+    // MULTI-region enrolment.
+    const regionsRaw = form.get("regions") as string | null;
+    if (regionsRaw) {
+      let parsed: any[];
+      try {
+        parsed = JSON.parse(regionsRaw);
+      } catch {
+        return NextResponse.json(
+          { error: "regions must be valid JSON" },
+          { status: 400 }
+        );
+      }
+      const regions = (Array.isArray(parsed) ? parsed : [])
+        .filter(
+          (r) =>
+            r &&
+            typeof r.signerName === "string" &&
+            r.signerName.trim() &&
+            r.cropRect &&
+            typeof r.cropRect.x === "number"
+        )
+        .map((r) => ({
+          signerName: r.signerName.trim(),
+          label: (r.label || "").trim() || undefined,
+          cropRect: r.cropRect,
+        }));
+      if (regions.length === 0) {
+        return NextResponse.json(
+          { error: "at least one named region is required" },
+          { status: 400 }
+        );
+      }
+      const docs = await enrollSignatureRegions({
+        buffer,
+        mime,
+        fileName: f.name || "signature",
+        regions,
+      });
+      const signatures = docs.map(({ embedding, ...rest }) => rest);
+      return NextResponse.json({ signatures });
+    }
+
+    // SINGLE-region (legacy) enrolment.
     const signerName = (form.get("signerName") as string | null)?.trim();
     if (!signerName) {
       return NextResponse.json(
@@ -40,16 +104,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const f = file as File;
-    const buffer = Buffer.from(await f.arrayBuffer());
-    const mime = f.type || "image/png";
-    if (!mime.startsWith("image/")) {
-      return NextResponse.json(
-        { error: "file must be an image" },
-        { status: 400 }
-      );
-    }
-
     const signature = await enrollSignature({
       buffer,
       mime,
@@ -58,7 +112,6 @@ export async function POST(req: NextRequest) {
       label,
       cropRect,
     });
-    // Don't ship the raw vector back to the client.
     const { embedding, ...rest } = signature;
     return NextResponse.json({ signature: rest });
   } catch (e) {

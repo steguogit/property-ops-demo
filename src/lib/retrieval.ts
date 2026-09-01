@@ -11,6 +11,7 @@ import {
   voyageEmbedOne,
   voyageRerank,
   voyageEmbedMultimodalOne,
+  voyageEmbedMultimodalImageOne,
 } from "./voyage";
 
 export type RetrievalMode =
@@ -56,6 +57,13 @@ export interface SearchHit {
   obsoleteFlag?: boolean;
   effectiveFrom?: string;
   ocrUsed?: boolean;
+  /** Handwritten names (HK tenancy signatures) recovered by the multimodal pass. */
+  extractedHandwrittenNames?: {
+    nameText: string;
+    lang: "zh" | "en" | "mixed" | "unknown";
+    bbox?: [number, number][];
+    sourceConfidence?: number;
+  }[];
   // scoring
   score: number; // primary score for the mode (normalised-ish)
   rank: number;
@@ -105,6 +113,7 @@ const PROJECT = {
   obsoleteFlag: 1,
   effectiveFrom: 1,
   ocrUsed: 1,
+  extractedHandwrittenNames: 1,
   // FSI EXPANSION: structured address fields.
   metadataType: 1,
   floor_num: 1,
@@ -141,6 +150,7 @@ function toHit(doc: any, rank: number): SearchHit {
     obsoleteFlag: doc.obsoleteFlag,
     effectiveFrom: doc.effectiveFrom,
     ocrUsed: doc.ocrUsed,
+    extractedHandwrittenNames: doc.extractedHandwrittenNames,
     // FSI EXPANSION: carry structured fields through for floor-aware ranking + UI.
     metadataType: doc.metadataType,
     floor_num: doc.floor_num,
@@ -212,6 +222,20 @@ export function buildLexicalSearchStage(query: string): Record<string, unknown> 
             score: { boost: { value: 5 } },
           },
         },
+        // Multilingual handwritten-name recall (HK tenancy signatures). The
+        // CJK-analyzed base path matches a handwritten Chinese name; the Latin
+        // `.en` multi-analyzer path matches the English name. Either recalls
+        // the tenancy. Boosted highest — a name hit is a strong signal.
+        {
+          text: {
+            query,
+            path: [
+              "extractedHandwrittenNames.nameText",
+              { value: "extractedHandwrittenNames.nameText", multi: "en" },
+            ],
+            score: { boost: { value: 6 } },
+          },
+        },
       ],
       minimumShouldMatch: 1,
     },
@@ -257,6 +281,68 @@ export async function vectorSearch(
     hit.vectorScore = d.vectorScore;
     hit.score = d.vectorScore ?? 0;
     hit.matchedTerms = matchedTermsFor(query, hit);
+    return hit;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// IMAGE-QUERY vector search (image-to-image).
+//
+// Embeds a QUERY IMAGE with voyage-multimodal-3.5 and $vectorSearches the
+// `embeddingMultimodal` field on the chunks corpus. This is the same vector
+// space that image uploads' pixel embeddings live in (see ingest.ts step 6c),
+// so it does true image-to-image comparison. Uses input_type "document" on the
+// query side to match how corpus images were embedded (symmetric image match).
+// ---------------------------------------------------------------------------
+export async function imageVectorSearch(
+  buffer: Buffer,
+  mime: string,
+  limit = 8,
+  filter?: Record<string, unknown>
+): Promise<SearchHit[]> {
+  const col = await getCollection();
+  const queryVector = await voyageEmbedMultimodalImageOne(
+    buffer,
+    mime,
+    "document"
+  );
+  const vectorStage: Record<string, unknown> = {
+    index: env.vectorIndexMultimodal,
+    path: "embeddingMultimodal",
+    queryVector,
+    numCandidates: 200,
+    // Over-fetch: a multi-chunk image document would otherwise fill all slots
+    // with the same image. We collapse to one hit per document below, so ask
+    // for more candidates than the requested limit.
+    limit: Math.max(limit * 5, 25),
+  };
+  if (filter && Object.keys(filter).length) vectorStage.filter = filter;
+
+  const pipeline = [
+    { $vectorSearch: vectorStage },
+    { $project: { ...PROJECT, vectorScore: { $meta: "vectorSearchScore" } } },
+  ];
+
+  const docs = await col.aggregate(pipeline).toArray();
+
+  // Collapse to the BEST-scoring chunk per document, so image results are one
+  // row per distinct image (not one per chunk). Preserve score order.
+  const bestByDoc = new Map<string, any>();
+  for (const d of docs) {
+    const key = d.documentId || d.docId || d._id;
+    const prev = bestByDoc.get(key);
+    if (!prev || (d.vectorScore ?? 0) > (prev.vectorScore ?? 0)) {
+      bestByDoc.set(key, d);
+    }
+  }
+  const unique = Array.from(bestByDoc.values())
+    .sort((a, b) => (b.vectorScore ?? 0) - (a.vectorScore ?? 0))
+    .slice(0, limit);
+
+  return unique.map((d, i) => {
+    const hit = toHit(d, i + 1);
+    hit.vectorScore = d.vectorScore;
+    hit.score = d.vectorScore ?? 0;
     return hit;
   });
 }
@@ -421,16 +507,51 @@ export async function buildFloorTierPipeline(
   // AFTER re-tiering). $meta:"score" is only readable right after $rankFusion.
   pipeline.push({ $addFields: { _hybridScore: { $meta: "score" } } });
 
+  // Step 2b: BUILDING GATE. The floor/unit tier must only re-order docs that
+  // belong to the SAME building the user is asking about — otherwise a
+  // wrong-building doc that happens to share floor+unit (e.g. 万科城 A1座 8楼
+  // 0801) would be promoted above the correct 翠湖花园 docs on other floors.
+  //
+  // We do NOT match the building by name/regex from the query (stays
+  // language-agnostic). Instead we treat the TOP hybrid hit as the target
+  // building and broadcast its estate+district to every candidate via
+  // $setWindowFields, then flag same-building docs. Building relevance is thus
+  // decided by hybrid search; floor/unit only re-orders WITHIN that building.
+  pipeline.push({
+    $setWindowFields: {
+      sortBy: { _hybridScore: -1 },
+      output: {
+        _topEstate: { $first: "$estate", window: { documents: ["unbounded", "unbounded"] } },
+        _topDistrict: { $first: "$district", window: { documents: ["unbounded", "unbounded"] } },
+      },
+    },
+  });
+  pipeline.push({
+    $addFields: {
+      _sameBuilding: {
+        $and: [
+          { $eq: ["$estate", "$_topEstate"] },
+          { $eq: ["$district", "$_topDistrict"] },
+        ],
+      },
+    },
+  });
+
   // Step 3: compute a structured tier IN-PIPELINE (no app-side JS).
-  //   tier 0: exact floor AND exact unit   (the queried room)
-  //   tier 1: exact floor                  (same-floor neighbours)
-  //   tier 2: everything else
+  // BUILDING IS THE PRIMARY DISCRIMINATOR: every same-building doc (tiers 0–2)
+  // ranks above every other-building doc (tier 3), so the whole correct
+  // community stays together. Floor/unit only orders WITHIN that community.
+  //   tier 0: same building AND exact floor AND exact unit  (the queried room)
+  //   tier 1: same building AND exact floor                 (same-floor neighbours)
+  //   tier 2: same building, any other floor/unit           (rest of the community)
+  //   tier 3: everything else (other buildings)
   if (opts.floor != null) {
     const branches: Record<string, unknown>[] = [];
     if (opts.unit) {
       branches.push({
         case: {
           $and: [
+            "$_sameBuilding",
             { $eq: ["$floor_num", opts.floor] },
             { $in: ["$unit_code", unitCodeVariants(opts.unit)] },
           ],
@@ -438,15 +559,31 @@ export async function buildFloorTierPipeline(
         then: 0,
       });
     }
-    branches.push({ case: { $eq: ["$floor_num", opts.floor] }, then: 1 });
-    pipeline.push({
-      $addFields: { _tier: { $switch: { branches, default: 2 } } },
+    branches.push({
+      case: {
+        $and: ["$_sameBuilding", { $eq: ["$floor_num", opts.floor] }],
+      },
+      then: 1,
     });
-    // Step 4: structured ordering — same-floor/unit first, hybrid score within.
+    // Same building but a different floor/unit — still part of the correct
+    // community, so it must outrank any other building.
+    branches.push({ case: "$_sameBuilding", then: 2 });
+    pipeline.push({
+      $addFields: { _tier: { $switch: { branches, default: 3 } } },
+    });
+    // Step 4: structured ordering — building first (tiers 0–2 vs 3), then
+    // floor/unit tier, then hybrid score within a tier. The correct community
+    // is never interleaved with other communities.
     pipeline.push({ $sort: { _tier: 1, _hybridScore: -1 } });
   } else {
-    // No parsed floor: keep pure hybrid order.
-    pipeline.push({ $sort: { _hybridScore: -1 } });
+    // No parsed floor: still keep the correct community together, ordered by
+    // hybrid score within.
+    pipeline.push({
+      $addFields: {
+        _tier: { $cond: ["$_sameBuilding", 0, 1] },
+      },
+    });
+    pipeline.push({ $sort: { _tier: 1, _hybridScore: -1 } });
   }
 
   pipeline.push({ $limit: limit });

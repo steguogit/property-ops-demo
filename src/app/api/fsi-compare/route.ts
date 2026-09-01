@@ -76,14 +76,28 @@ function buildAnnotatedFloorPipeline(
   // ── ② 把 hybrid 的 RRF 分存成真欄位（$meta:"score" 只能緊接 $rankFusion 讀取）──
   { "$addFields": { "_hybridScore": { "$meta": "score" } } },
 
-  // ── ③ 在 pipeline 內算結構化 tier（$switch，純結構，不碰大廈名）──
+  // ── ②b 大廈閘門：以 hybrid 分最高的文檔作「目標大廈」，廣播其 estate/district ──
+  //      （不用 query 匹配大廈名，仍多語言通用；樓層/單元只在同一大廈內重排）
+  { "$setWindowFields": { "sortBy": { "_hybridScore": -1 }, "output": {
+      "_topEstate":   { "$first": "$estate",   "window": { "documents": ["unbounded", "unbounded"] } },
+      "_topDistrict": { "$first": "$district", "window": { "documents": ["unbounded", "unbounded"] } }
+  } } },
+  { "$addFields": { "_sameBuilding": { "$and": [
+      { "$eq": ["$estate", "$_topEstate"] },
+      { "$eq": ["$district", "$_topDistrict"] }
+  ] } } },
+
+  // ── ③ 在 pipeline 內算結構化 tier（$switch；大廈為主鍵，tier 0-2 全屬同大廈）──
   { "$addFields": { "_tier": { "$switch": { "branches": [
-      { "case": { "$and": [ { "$eq": ["$floor_num", ${floor}] },
-                            { "$in": ["$unit_code", ${unitVariants}] } ] },  // 精確樓層+單元
+      { "case": { "$and": [ "$_sameBuilding",                                 // 同大廈 + 精確樓層 + 精確單元
+                            { "$eq": ["$floor_num", ${floor}] },
+                            { "$in": ["$unit_code", ${unitVariants}] } ] },
         "then": 0 },
-      { "case": { "$eq": ["$floor_num", ${floor}] },                          // 精確樓層
-        "then": 1 }
-    ], "default": 2 } } } },                                                  // 其餘
+      { "case": { "$and": [ "$_sameBuilding",                                 // 同大廈 + 精確樓層
+                            { "$eq": ["$floor_num", ${floor}] } ] },
+        "then": 1 },
+      { "case": "$_sameBuilding", "then": 2 }                                 // 同大廈 其餘樓層/單元
+    ], "default": 3 } } } },                                                  // 其他大廈
 
   // ── ④ 結構化排序：同樓層/單元置頂，tier 內按 hybrid 分（無 magic number）──
   { "$sort": { "_tier": 1, "_hybridScore": -1 } },
@@ -140,13 +154,18 @@ export async function POST(req: NextRequest) {
             "hybrid 檢索。大廈／地址語義完全由此理解——不匹配大廈名、不用 regex，天然支援多語言。候選集已是正確大廈。",
         },
         {
+          name: "②b 大廈閘門（$setWindowFields）",
+          detail:
+            "以 hybrid 分最高的文檔作「目標大廈」，把其 estate/district 廣播到所有候選，標記 _sameBuilding。tier 0/1 只給同大廈文檔——防止其他大廈同樓層/單元（如 万科城 A1座 8楼 0801）越過正確大廈。仍不匹配 query 大廈名、多語言通用。",
+        },
+        {
           name: "② $addFields：_hybridScore + _tier",
-          detail: `把 $rankFusion 的 { $meta: "score" } 存成真欄位；再用 $switch 算 tier：floor_num=${parsed.floor ?? "?"} 且 unit=${parsed.unit ?? "?"} → 0；floor_num=${parsed.floor ?? "?"} → 1；其餘 → 2。`,
+          detail: `把 $rankFusion 的 { $meta: "score" } 存成真欄位；再用 $switch 算 tier（大廈為主鍵）：同大廈+floor_num=${parsed.floor ?? "?"}+unit=${parsed.unit ?? "?"} → 0；同大廈+floor_num=${parsed.floor ?? "?"} → 1；同大廈其餘樓層/單元 → 2；其他大廈 → 3。整個正確小區（tier 0-2）永遠排在其他小區（tier 3）之上。`,
         },
         {
           name: "③ $sort：{ _tier: 1, _hybridScore: -1 }",
           detail:
-            "先按 tier 置頂（同樓層/單元升到最前），tier 內按 hybrid RRF 分排序。純結構排序，無 +100/−10 之類 magic number。",
+            "大廈為主鍵：整個正確小區（tier 0-2）置於其他小區（tier 3）之上，不會交錯；小區內再按樓層/單元 tier；同 tier 內按 hybrid RRF 分。純結構排序，無 +100/−10 之類 magic number。",
         },
       ],
       stages: [
@@ -192,7 +211,7 @@ export async function POST(req: NextRequest) {
         },
       ],
       notes:
-        "【全部在一條 pipeline】$rankFusion 之後直接接 $addFields + $sort，樓層/單元置頂在 aggregation 內完成，不回應用層。 【大廈由 hybrid 理解】floor/unit 只重新排序 hybrid 的候選，不匹配大廈名、不用 regex，換其他 entity 或多語言一樣可用。 【純結構排序】tier 只用離散層級（0/1/2）+ hybrid 分做 tie-break，無 +100/−10 之類 magic number。 【單元格式】unit_code 有補零（0803）與不補零（803）兩種寫法，$switch 用 $in 同時匹配兩種，屬資料正規化。",
+        "【全部在一條 pipeline】$rankFusion → $setWindowFields（大廈閘門）→ $addFields + $sort，全部在 aggregation 內完成，不回應用層。 【大廈為主排序鍵】以 hybrid 分最高的文檔作目標小區，tier 0-2 全屬同 estate/district，tier 3 為其他小區；整個正確小區永遠排在其他小區之上，floor/unit 只在小區內重排——不匹配 query 大廈名、不用 regex，多語言通用。 【純結構排序】tier 只用離散層級（0/1/2/3）+ hybrid 分做 tie-break，無 +100/−10 之類 magic number。 【單元格式】unit_code 有補零（0803）與不補零（803）兩種寫法，$switch 用 $in 同時匹配兩種，屬資料正規化。",
     };
 
     const columns = [

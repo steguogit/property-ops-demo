@@ -103,6 +103,16 @@ function lexicalSearchStage(query: string) {
             score: { boost: { value: 5 } },
           },
         },
+        {
+          text: {
+            query,
+            path: [
+              "extractedHandwrittenNames.nameText",
+              { value: "extractedHandwrittenNames.nameText", multi: "en" },
+            ],
+            score: { boost: { value: 6 } },
+          },
+        },
       ],
       minimumShouldMatch: 1,
     },

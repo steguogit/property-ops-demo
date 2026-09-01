@@ -91,6 +91,13 @@ export const DICT: Dict = {
   },
   "query.compare": { en: "Compare", zh: "比較" },
   "query.answer": { en: "Answer", zh: "回答" },
+  "query.searchByImage": { en: "Search by image", zh: "以圖搜尋" },
+  "query.imageAttached": {
+    en: "Image attached — click Compare to search by image",
+    zh: "已附加圖片 — 按「比較」以圖搜尋",
+  },
+  "query.imageMode": { en: "Image search", zh: "圖片搜尋" },
+  "query.removeImage": { en: "Remove", zh: "移除" },
   "query.hybridWeighting": { en: "Hybrid weighting — lexical", zh: "混合權重 — 詞彙" },
   "query.vector": { en: "vector", zh: "向量" },
   "query.weights": {
@@ -141,6 +148,34 @@ export const DICT: Dict = {
     zh: "請選擇圖片並輸入簽名人姓名。",
   },
   "sig.enrolled": { en: "Enrolled signature for {name}.", zh: "已登記 {name} 的簽名。" },
+  "sig.enrolledMany": {
+    en: "Enrolled {count} signatures.",
+    zh: "已登記 {count} 個簽名。",
+  },
+  "sig.enrollAllBtn": {
+    en: "Enrol {count} signatures",
+    zh: "登記 {count} 個簽名",
+  },
+  "sig.multiEnrollHint": {
+    en: "{count} signature regions detected. Name each one to enrol it as a separate specimen (leave blank to skip).",
+    zh: "偵測到 {count} 個簽名區域。為每個區域命名以分別登記為獨立樣本（留空則略過）。",
+  },
+  "sig.needRegionNames": {
+    en: "Enter a signer name for at least one region.",
+    zh: "請至少為一個區域輸入簽名人姓名。",
+  },
+  "sig.nRegions": {
+    en: "{count} regions detected",
+    zh: "偵測到 {count} 個區域",
+  },
+  "sig.compareAllHint": {
+    en: "{count} signature regions detected — Compare will match EACH region against the enrolled specimens and show the best match per region.",
+    zh: "偵測到 {count} 個簽名區域 — 比對將以每個區域分別與已登記樣本比對，並顯示每個區域的最佳匹配。",
+  },
+  "sig.regionResultHead": {
+    en: "Region {n} — best match",
+    zh: "區域 {n} — 最佳匹配",
+  },
   "sig.libraryTitle": { en: "Enrolled signatures ({n})", zh: "已登記簽名（{n}）" },
   "sig.emptyLibrary": {
     en: "No enrolled signatures yet. Enrol a few specimens above, then compare a query signature.",
@@ -183,6 +218,15 @@ export const DICT: Dict = {
     en: "No signature region detected — draw one manually.",
     zh: "未偵測到簽名區域 — 請手動框選。",
   },
+  "sig.multiRegion": {
+    en: "Detected {count} signature regions — pick which one to use below.",
+    zh: "偵測到 {count} 個簽名區域 — 請於下方選擇要使用的一個。",
+  },
+  "sig.chooseRegion": {
+    en: "{count} signatures found — choose a region:",
+    zh: "找到 {count} 個簽名 — 請選擇區域：",
+  },
+  "sig.regionN": { en: "Region {n}", zh: "區域 {n}" },
   "sig.wholeImageWarn": {
     en: "No box selected: the WHOLE image will be embedded (less precise).",
     zh: "未框選：將以整張圖片建立嵌入（精準度較低）。",
@@ -288,6 +332,22 @@ export const DICT: Dict = {
   "sig.proc.boxNote": {
     en: "Box x:{x} y:{y} w:{w} h:{h} (fractions of the page).",
     zh: "邊界框 x:{x} y:{y} w:{w} h:{h}（相對整頁的比例）。",
+  },
+  "sig.proc.boxesNote": {
+    en: "Found {count} signature region(s).",
+    zh: "找到 {count} 個簽名區域。",
+  },
+  "sig.proc.cache": {
+    en: "Check detection cache",
+    zh: "檢查偵測快取",
+  },
+  "sig.proc.cacheHit": {
+    en: "Returned {count} previously stabilised region(s) for this exact image.",
+    zh: "此圖片先前已穩定化，直接返回 {count} 個區域。",
+  },
+  "sig.proc.cacheMiss": {
+    en: "No cached result; running the vision model.",
+    zh: "沒有快取結果；正在執行視覺模型。",
   },
   "sig.proc.parseFailed": {
     en: "Failed to parse model JSON.",

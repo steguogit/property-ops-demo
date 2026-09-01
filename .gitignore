@@ -35,3 +35,9 @@ Thumbs.db
 
 # Coverage / test artifacts
 coverage/
+
+# Python (ocr-service)
+.venv/
+venv/
+__pycache__/
+*.pyc

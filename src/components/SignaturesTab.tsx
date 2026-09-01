@@ -22,6 +22,14 @@ interface MatchItem {
   band: "match" | "review" | "no_match";
 }
 
+/** Per-region comparison result: the best matches for ONE detected region. */
+interface RegionResult {
+  regionIndex: number;
+  cropRect: Rect;
+  matches: MatchItem[];
+  best: MatchItem | null;
+}
+
 /** Enlarged signature viewer: full image with the embedded region boxed. */
 interface ViewerTarget {
   src: string;
@@ -244,6 +252,8 @@ interface DetectStep {
 }
 interface DetectResult {
   cropRect: Rect | null;
+  /** All detected signature regions (may contain more than one). */
+  cropRects?: Rect[];
   steps: DetectStep[];
   rawResponse?: string;
 }
@@ -306,6 +316,47 @@ function ProcessDialog({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** One enrolled-specimen match row (thumbnail + name + score + band tag). */
+function MatchRow({
+  m,
+  onView,
+  t,
+}: {
+  m: MatchItem;
+  onView: (v: ViewerTarget) => void;
+  t: (k: string, vars?: Record<string, string | number>) => string;
+}) {
+  return (
+    <div className={`sig-match band-${m.band}`}>
+      {m.originalFileId && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          className="sig-match-thumb clickable"
+          src={`/api/signatures/${m.signatureId}/file`}
+          alt={m.signerName}
+          title={t("sig.clickEnlarge")}
+          onClick={() =>
+            onView({
+              src: `/api/signatures/${m.signatureId}/file`,
+              title: m.signerName,
+              subtitle: m.label,
+              cropRect: m.cropRect,
+            })
+          }
+        />
+      )}
+      <div className="sig-match-info">
+        <div className="sig-match-name">{m.signerName}</div>
+        {m.label && <div className="sig-match-label">{m.label}</div>}
+        <div className="sig-match-score">
+          {(m.similarity * 100).toFixed(1)}% {t("sig.similarity")}
+        </div>
+      </div>
+      <span className={`sig-band-tag ${m.band}`}>{t(`sig.band.${m.band}`)}</span>
     </div>
   );
 }
@@ -514,24 +565,32 @@ export function SignaturesTab() {
   const [enrolling, setEnrolling] = useState(false);
   const [detectingEnroll, setDetectingEnroll] = useState(false);
   const [enrollProcess, setEnrollProcess] = useState<DetectResult | null>(null);
+  // All signature regions detected in the enrol image. When >1, EACH region is
+  // enrolled as its own specimen with its own name/label (tenant, landlord, …).
+  const [enrollBoxes, setEnrollBoxes] = useState<Rect[]>([]);
+  // Per-region signer names/labels, keyed by region index (multi-region enrol).
+  const [regionNames, setRegionNames] = useState<Record<number, string>>({});
+  const [regionLabels, setRegionLabels] = useState<Record<number, string>>({});
 
   // Compare
   const [queryFile, setQueryFile] = useState<File | null>(null);
   const [queryCrop, setQueryCrop] = useState<Rect | null>(null);
   const [detectingQuery, setDetectingQuery] = useState(false);
   const [queryProcess, setQueryProcess] = useState<DetectResult | null>(null);
+  // All signature regions detected in the query image (>1 = user chooses one).
+  const [queryBoxes, setQueryBoxes] = useState<Rect[]>([]);
   const [comparing, setComparing] = useState(false);
   // Which detect trace to show in the process dialog.
   const [processDialog, setProcessDialog] = useState<DetectResult | null>(null);
   const [matches, setMatches] = useState<MatchItem[] | null>(null);
+  // Per-region compare results (best match per detected signature region).
+  const [regionResults, setRegionResults] = useState<RegionResult[] | null>(
+    null
+  );
   const [thresholds, setThresholds] = useState<{
     match: number;
     review: number;
   } | null>(null);
-  // True when the query box has changed since the last compare (needs re-embed).
-  const [boxDirty, setBoxDirty] = useState(false);
-  // In-page confirmation before (re)embedding the compare region.
-  const [confirmCompare, setConfirmCompare] = useState(false);
 
   // Enlarged signature viewer (full image + boxed embedded region).
   const [viewer, setViewer] = useState<ViewerTarget | null>(null);
@@ -553,12 +612,14 @@ export function SignaturesTab() {
     file: File | null,
     setCrop: (r: Rect | null) => void,
     setBusy: (b: boolean) => void,
-    setProcess: (r: DetectResult | null) => void
+    setProcess: (r: DetectResult | null) => void,
+    setBoxes?: (r: Rect[]) => void
   ) {
     if (!file) return;
     setBusy(true);
     setNotice(null);
     setProcess(null);
+    setBoxes?.([]);
     try {
       const fd = new FormData();
       fd.append("file", file);
@@ -572,8 +633,21 @@ export function SignaturesTab() {
         return;
       }
       setProcess(data);
-      if (data.cropRect) setCrop(data.cropRect);
-      else setNotice({ kind: "warn", text: t("sig.noRegion") });
+      // The API may return several signature regions. Keep them all so the user
+      // can pick which one to enrol/compare; default the active crop to the first.
+      const boxes = data.cropRects ?? (data.cropRect ? [data.cropRect] : []);
+      setBoxes?.(boxes);
+      if (boxes.length > 0) {
+        setCrop(boxes[0]);
+        if (boxes.length > 1) {
+          setNotice({
+            kind: "info",
+            text: t("sig.multiRegion", { count: boxes.length }),
+          });
+        }
+      } else {
+        setNotice({ kind: "warn", text: t("sig.noRegion") });
+      }
     } catch (e) {
       setNotice({ kind: "warn", text: (e as Error).message });
     } finally {
@@ -582,29 +656,70 @@ export function SignaturesTab() {
   }
 
   async function enroll() {
-    if (!enrollFile || !signerName.trim()) {
+    if (!enrollFile) {
       setNotice({ kind: "warn", text: t("sig.needFileAndName") });
       return;
     }
+    const multi = enrollBoxes.length > 1;
+
     setEnrolling(true);
     setNotice(null);
     try {
       const fd = new FormData();
       fd.append("file", enrollFile);
-      fd.append("signerName", signerName.trim());
-      if (label.trim()) fd.append("label", label.trim());
-      if (enrollCrop) fd.append("cropRect", JSON.stringify(enrollCrop));
+
+      if (multi) {
+        // Enrol EACH named region as its own specimen. Regions left unnamed are
+        // skipped by the server, so the user can enrol just the ones they care
+        // about (e.g. only the tenant + landlord signatures).
+        const regions = enrollBoxes
+          .map((box, i) => ({
+            signerName: (regionNames[i] || "").trim(),
+            label: (regionLabels[i] || "").trim() || undefined,
+            cropRect: box,
+          }))
+          .filter((r) => r.signerName);
+        if (regions.length === 0) {
+          setNotice({ kind: "warn", text: t("sig.needRegionNames") });
+          setEnrolling(false);
+          return;
+        }
+        fd.append("regions", JSON.stringify(regions));
+      } else {
+        if (!signerName.trim()) {
+          setNotice({ kind: "warn", text: t("sig.needFileAndName") });
+          setEnrolling(false);
+          return;
+        }
+        fd.append("signerName", signerName.trim());
+        if (label.trim()) fd.append("label", label.trim());
+        if (enrollCrop) fd.append("cropRect", JSON.stringify(enrollCrop));
+      }
+
       const res = await fetch("/api/signatures", { method: "POST", body: fd });
       const data = await res.json();
       if (data.error) {
         setNotice({ kind: "warn", text: data.error });
       } else {
+        const count = data.signatures?.length ?? (data.signature ? 1 : 0);
         setNotice({
           kind: "info",
-          text: t("sig.enrolled", { name: data.signature.signerName }),
+          text:
+            count > 1
+              ? t("sig.enrolledMany", { count })
+              : t("sig.enrolled", {
+                  name:
+                    data.signature?.signerName ??
+                    data.signatures?.[0]?.signerName ??
+                    "",
+                }),
         });
         setEnrollFile(null);
         setEnrollCrop(null);
+        setEnrollBoxes([]);
+        setRegionNames({});
+        setRegionLabels({});
+        setSignerName("");
         setLabel("");
         await load();
       }
@@ -621,32 +736,32 @@ export function SignaturesTab() {
     await load();
   }
 
-  // Step 1: validate + surface an in-page confirmation (no blocking popup).
-  function requestCompare() {
+  /**
+   * Compare ALL detected signature regions of the query document at once and
+   * show the best match PER region. The user does NOT pick a region — vector
+   * search finds the best-matching enrolled specimen for each region on its own.
+   */
+  async function runCompare() {
     if (!queryFile) return;
     if (!items.length) {
       setNotice({ kind: "warn", text: t("sig.noEnrolled") });
       return;
     }
-    // Enrolled specimens are embedded from a signature CROP. Comparing a whole
-    // page against them is meaningless (page pixels dominate), so require a box.
-    if (!queryCrop) {
-      setNotice({ kind: "warn", text: t("sig.cropRequired") });
-      return;
-    }
-    setConfirmCompare(true);
-  }
-
-  // Step 2: actually (re)embed the confirmed region and match.
-  async function runCompareNow() {
-    setConfirmCompare(false);
-    if (!queryFile || !queryCrop) return;
+    // Prefer the auto-detected regions; fall back to a single active box, then
+    // to letting the server auto-detect if we somehow have neither.
+    const boxes =
+      queryBoxes.length > 0
+        ? queryBoxes
+        : queryCrop
+        ? [queryCrop]
+        : [];
     setComparing(true);
     setMatches(null);
+    setRegionResults(null);
     try {
       const fd = new FormData();
       fd.append("file", queryFile);
-      fd.append("cropRect", JSON.stringify(queryCrop));
+      if (boxes.length > 0) fd.append("cropRects", JSON.stringify(boxes));
       const res = await fetch("/api/signatures/compare", {
         method: "POST",
         body: fd,
@@ -655,9 +770,9 @@ export function SignaturesTab() {
       if (data.error) {
         setNotice({ kind: "warn", text: data.error });
       } else {
+        setRegionResults(data.regions ?? []);
         setMatches(data.matches ?? []);
         setThresholds(data.thresholds ?? null);
-        setBoxDirty(false);
       }
     } catch (e) {
       setNotice({ kind: "warn", text: (e as Error).message });
@@ -684,7 +799,17 @@ export function SignaturesTab() {
             onPick={(f) => {
               setEnrollFile(f);
               setEnrollCrop(null);
-              if (f) autoDetect(f, setEnrollCrop, setDetectingEnroll, setEnrollProcess);
+              setEnrollBoxes([]);
+              setRegionNames({});
+              setRegionLabels({});
+              if (f)
+                autoDetect(
+                  f,
+                  setEnrollCrop,
+                  setDetectingEnroll,
+                  setEnrollProcess,
+                  setEnrollBoxes
+                );
             }}
             crop={enrollCrop}
             onCrop={setEnrollCrop}
@@ -700,7 +825,8 @@ export function SignaturesTab() {
                       enrollFile,
                       setEnrollCrop,
                       setDetectingEnroll,
-                      setEnrollProcess
+                      setEnrollProcess,
+                      setEnrollBoxes
                     )
                   }
                   disabled={detectingEnroll}
@@ -728,22 +854,75 @@ export function SignaturesTab() {
               {detectingEnroll && <DetectProgress />}
             </>
           )}
-          <div className="field" style={{ marginTop: 10 }}>
-            <label>{t("sig.signerName")}</label>
-            <input
-              value={signerName}
-              onChange={(e) => setSignerName(e.target.value)}
-              placeholder={t("sig.signerPlaceholder")}
-            />
-          </div>
-          <div className="field">
-            <label>{t("sig.label")}</label>
-            <input
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder={t("sig.labelPlaceholder")}
-            />
-          </div>
+
+          {enrollBoxes.length > 1 ? (
+            // MULTI-region: name each detected signature; each becomes its own
+            // specimen. Leave a name blank to skip that region.
+            <div className="sig-region-enroll" style={{ marginTop: 10 }}>
+              <div className="sig-region-enroll-hint">
+                {t("sig.multiEnrollHint", { count: enrollBoxes.length })}
+              </div>
+              {enrollBoxes.map((box, i) => (
+                <div
+                  className="sig-region-enroll-row"
+                  key={i}
+                  onMouseEnter={() => setEnrollCrop(box)}
+                  style={{
+                    border: "1px solid var(--border, #ddd)",
+                    borderRadius: 8,
+                    padding: 10,
+                    marginTop: 8,
+                  }}
+                >
+                  <div
+                    className="sig-region-enroll-title"
+                    style={{ fontWeight: 600, marginBottom: 6 }}
+                  >
+                    {t("sig.regionN", { n: i + 1 })}
+                  </div>
+                  <div className="field">
+                    <label>{t("sig.signerName")}</label>
+                    <input
+                      value={regionNames[i] || ""}
+                      onChange={(e) =>
+                        setRegionNames((m) => ({ ...m, [i]: e.target.value }))
+                      }
+                      placeholder={t("sig.signerPlaceholder")}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>{t("sig.label")}</label>
+                    <input
+                      value={regionLabels[i] || ""}
+                      onChange={(e) =>
+                        setRegionLabels((m) => ({ ...m, [i]: e.target.value }))
+                      }
+                      placeholder={t("sig.labelPlaceholder")}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <>
+              <div className="field" style={{ marginTop: 10 }}>
+                <label>{t("sig.signerName")}</label>
+                <input
+                  value={signerName}
+                  onChange={(e) => setSignerName(e.target.value)}
+                  placeholder={t("sig.signerPlaceholder")}
+                />
+              </div>
+              <div className="field">
+                <label>{t("sig.label")}</label>
+                <input
+                  value={label}
+                  onChange={(e) => setLabel(e.target.value)}
+                  placeholder={t("sig.labelPlaceholder")}
+                />
+              </div>
+            </>
+          )}
           <div className="sig-btn-row">
             <button
               className="btn primary"
@@ -754,6 +933,8 @@ export function SignaturesTab() {
                 <>
                   <span className="loading" /> {t("sig.enrolling")}
                 </>
+              ) : enrollBoxes.length > 1 ? (
+                t("sig.enrollAllBtn", { count: enrollBoxes.length })
               ) : (
                 t("sig.enrollBtn")
               )}
@@ -817,17 +998,24 @@ export function SignaturesTab() {
             onPick={(f) => {
               setQueryFile(f);
               setQueryCrop(null);
+              setQueryBoxes([]);
               setMatches(null);
-              setBoxDirty(false);
-              if (f) autoDetect(f, setQueryCrop, setDetectingQuery, setQueryProcess);
+              setRegionResults(null);
+              if (f)
+                autoDetect(
+                  f,
+                  setQueryCrop,
+                  setDetectingQuery,
+                  setQueryProcess,
+                  setQueryBoxes
+                );
             }}
             crop={queryCrop}
             onCrop={setQueryCrop}
             onManualEdit={() => {
-              // Manual box change invalidates prior results — force a re-embed.
-              setBoxDirty(true);
+              // Manual box change invalidates prior results.
               setMatches(null);
-              setConfirmCompare(false);
+              setRegionResults(null);
             }}
             label={t("sig.dropQuery")}
           />
@@ -841,7 +1029,8 @@ export function SignaturesTab() {
                       queryFile,
                       setQueryCrop,
                       setDetectingQuery,
-                      setQueryProcess
+                      setQueryProcess,
+                      setQueryBoxes
                     )
                   }
                   disabled={detectingQuery}
@@ -863,51 +1052,36 @@ export function SignaturesTab() {
                   </button>
                 )}
                 <span className="sig-crop-status">
-                  {queryCrop ? t("sig.cropped") : t("sig.wholeImageWarn")}
+                  {queryBoxes.length > 1
+                    ? t("sig.nRegions", { count: queryBoxes.length })
+                    : queryCrop
+                    ? t("sig.cropped")
+                    : t("sig.wholeImageWarn")}
                 </span>
               </div>
               {detectingQuery && <DetectProgress />}
-              {!detectingQuery && (
+              {!detectingQuery && queryBoxes.length > 1 && (
+                <div className="sig-detect-hint">
+                  {t("sig.compareAllHint", { count: queryBoxes.length })}
+                </div>
+              )}
+              {!detectingQuery && queryBoxes.length <= 1 && (
                 <div className="sig-detect-hint">
                   {t("sig.autoDetectUnreliableHint")}
                 </div>
               )}
-              {boxDirty && matches === null && queryCrop && (
-                <div className="notice warn" style={{ marginTop: 8 }}>
-                  {t("sig.boxAdjusted")}
-                </div>
-              )}
             </>
-          )}
-          {/* In-page confirmation instead of a blocking window.confirm popup. */}
-          {confirmCompare && (
-            <div className="notice info sig-confirm" style={{ marginTop: 10 }}>
-              <div>{t("sig.confirmCompare")}</div>
-              <div className="sig-confirm-actions">
-                <button className="btn sm primary" onClick={runCompareNow}>
-                  {t("sig.confirmYes")}
-                </button>
-                <button
-                  className="btn sm"
-                  onClick={() => setConfirmCompare(false)}
-                >
-                  {t("common.cancel")}
-                </button>
-              </div>
-            </div>
           )}
           <div className="sig-btn-row">
             <button
               className="btn primary"
-              onClick={requestCompare}
-              disabled={comparing || !queryFile || confirmCompare}
+              onClick={runCompare}
+              disabled={comparing || !queryFile}
             >
               {comparing ? (
                 <>
                   <span className="loading" /> {t("sig.comparing")}
                 </>
-              ) : boxDirty ? (
-                t("sig.reCompare")
               ) : (
                 t("sig.compareBtn")
               )}
@@ -915,7 +1089,7 @@ export function SignaturesTab() {
             <InfoTip />
           </div>
 
-          {matches && (
+          {(regionResults || matches) && (
             <div className="sig-results">
               <div className="sources-title" style={{ marginTop: 14 }}>
                 {t("sig.results")}
@@ -928,42 +1102,44 @@ export function SignaturesTab() {
                   })}
                 </div>
               )}
-              {matches.length === 0 && (
+
+              {/* Per-region results: one group per detected signature region,
+                  each showing its best-matching enrolled specimen. */}
+              {regionResults && regionResults.length > 0
+                ? regionResults.map((rr) => (
+                    <div className="sig-region-result" key={rr.regionIndex}>
+                      <div
+                        className="sig-region-result-head"
+                        style={{
+                          fontWeight: 600,
+                          marginTop: 12,
+                          marginBottom: 4,
+                        }}
+                      >
+                        {t("sig.regionResultHead", {
+                          n: rr.regionIndex,
+                        })}
+                      </div>
+                      {!rr.best && (
+                        <div className="empty">{t("common.noResults")}</div>
+                      )}
+                      {rr.best && (
+                        <MatchRow m={rr.best} onView={setViewer} t={t} />
+                      )}
+                    </div>
+                  ))
+                : (matches ?? []).map((m) => (
+                    <MatchRow
+                      key={m.signatureId}
+                      m={m}
+                      onView={setViewer}
+                      t={t}
+                    />
+                  ))}
+
+              {regionResults && regionResults.length === 0 && (
                 <div className="empty">{t("common.noResults")}</div>
               )}
-              {matches.map((m) => (
-                <div className={`sig-match band-${m.band}`} key={m.signatureId}>
-                  {m.originalFileId && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      className="sig-match-thumb clickable"
-                      src={`/api/signatures/${m.signatureId}/file`}
-                      alt={m.signerName}
-                      title={t("sig.clickEnlarge")}
-                      onClick={() =>
-                        setViewer({
-                          src: `/api/signatures/${m.signatureId}/file`,
-                          title: m.signerName,
-                          subtitle: m.label,
-                          cropRect: m.cropRect,
-                        })
-                      }
-                    />
-                  )}
-                  <div className="sig-match-info">
-                    <div className="sig-match-name">{m.signerName}</div>
-                    {m.label && (
-                      <div className="sig-match-label">{m.label}</div>
-                    )}
-                    <div className="sig-match-score">
-                      {(m.similarity * 100).toFixed(1)}% {t("sig.similarity")}
-                    </div>
-                  </div>
-                  <span className={`sig-band-tag ${m.band}`}>
-                    {t(`sig.band.${m.band}`)}
-                  </span>
-                </div>
-              ))}
             </div>
           )}
         </div>

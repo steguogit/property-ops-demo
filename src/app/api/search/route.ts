@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   runSearchEnhanced,
+  imageVectorSearch,
   RetrievalMode,
   EnhancedSearchOptions,
 } from "@/lib/retrieval";
@@ -18,11 +19,75 @@ const VALID_MODES: RetrievalMode[] = [
   "vector-multimodal",
 ];
 
+/** Parse a data URL / raw base64 into { buffer, mime }. */
+function parseImageInput(
+  image: string
+): { buffer: Buffer; mime: string } | null {
+  if (!image || typeof image !== "string") return null;
+  const m = image.match(/^data:([^;]+);base64,(.*)$/s);
+  if (m) {
+    return { mime: m[1], buffer: Buffer.from(m[2], "base64") };
+  }
+  // Fall back: treat as raw base64 of a PNG.
+  try {
+    return { mime: "image/png", buffer: Buffer.from(image, "base64") };
+  } catch {
+    return null;
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const query: string = (body.query ?? "").trim();
     const limit: number = body.limit ?? 8;
+
+    // --- IMAGE query path (Compare tab's image-in-search-box) --------------
+    // When an image is supplied, do image-to-image vector search against the
+    // multimodal embeddings, and return the same { query, results } shape with a
+    // single "vector-multimodal" result so the existing UI renders it.
+    if (body.image) {
+      const parsed = parseImageInput(body.image);
+      if (!parsed) {
+        return NextResponse.json(
+          { error: "invalid image data" },
+          { status: 400 }
+        );
+      }
+      const t0 = Date.now();
+      try {
+        const hits = await imageVectorSearch(
+          parsed.buffer,
+          parsed.mime,
+          limit
+        );
+        return NextResponse.json({
+          query: query || "(image query)",
+          isImageQuery: true,
+          results: [
+            {
+              mode: "vector-multimodal",
+              ms: Date.now() - t0,
+              hits,
+              explain: null,
+              models: modelsForMode("vector-multimodal" as any),
+              appliedCorrections: null,
+              expandedAliases: [],
+              matchedProperties: [],
+              policyPlan: null,
+              traceId: null,
+              error: null,
+            },
+          ],
+        });
+      } catch (e) {
+        return NextResponse.json(
+          { error: (e as Error).message },
+          { status: 500 }
+        );
+      }
+    }
+
     const modes: RetrievalMode[] = Array.isArray(body.modes)
       ? body.modes.filter((m: string) => VALID_MODES.includes(m as RetrievalMode))
       : VALID_MODES;

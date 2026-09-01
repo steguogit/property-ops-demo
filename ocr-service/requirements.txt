@@ -1,0 +1,9 @@
+# Pinned to versions verified working on Python 3.11 / linux.
+# numpy<2 is required by paddlepaddle 2.6.x (paddleocr's deps otherwise pull 2.x).
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+pillow>=10.0
+numpy<2
+paddlepaddle==2.6.2
+paddleocr==2.7.3

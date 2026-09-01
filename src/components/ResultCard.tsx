@@ -118,6 +118,11 @@ export function ResultCard({
     !!hit.documentId &&
     hit.documentId.startsWith("DOC-") &&
     isPreviewable(hit.sourceFileType);
+  // Show a thumbnail for IMAGE documents (so image-search results are visual).
+  const showImageThumb =
+    !!hit.documentId &&
+    hit.documentId.startsWith("DOC-") &&
+    hit.sourceFileType === "image";
   return (
     <div className="card">
       <div className="top">
@@ -125,6 +130,33 @@ export function ResultCard({
         <span className="title">{hit.title}</span>
         <span className="score">{hit.score.toFixed(4)}</span>
       </div>
+
+      {showImageThumb && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          className="card-image-thumb"
+          src={`/api/documents/${hit.documentId}/file`}
+          alt={hit.title}
+          style={{
+            marginTop: 8,
+            maxWidth: "100%",
+            maxHeight: 160,
+            borderRadius: 8,
+            border: "1px solid var(--border)",
+            objectFit: "contain",
+            cursor: canPreview ? "pointer" : "default",
+          }}
+          onClick={() =>
+            canPreview &&
+            onPreview!({
+              documentId: hit.documentId!,
+              sourceFileName: hit.title,
+              sourceFileType: hit.sourceFileType,
+              title: hit.title,
+            })
+          }
+        />
+      )}
 
       <div className="badges">
         <span className="badge type">{TYPE_LABEL[hit.docType] ?? hit.docType}</span>

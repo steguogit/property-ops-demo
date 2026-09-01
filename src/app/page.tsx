@@ -145,7 +145,11 @@ export default function Home() {
   // FSI EXPANSION: active dataset mode + resolved chrome (title/tagline/etc).
   const { mode, setMode, chrome } = useIndustry();
   const [status, setStatus] = useState<Status | null>(null);
-  const [query, setQuery] = useState(SAMPLES[0].q);
+  const [query, setQuery] = useState("");
+  // Optional query IMAGE (Compare tab image-in-search-box). When set, Compare
+  // runs image-to-image vector search instead of text search.
+  const [queryImage, setQueryImage] = useState<File | null>(null);
+  const [queryImageUrl, setQueryImageUrl] = useState<string | null>(null);
   const [tab, setTab] = useState<
     | "compare"
     | "model-compare"
@@ -193,6 +197,17 @@ export default function Home() {
       .catch(() => setStatus(null));
   }, []);
 
+  // Maintain an object-URL preview for the optional query image.
+  useEffect(() => {
+    if (!queryImage) {
+      setQueryImageUrl(null);
+      return;
+    }
+    const u = URL.createObjectURL(queryImage);
+    setQueryImageUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [queryImage]);
+
   async function openSchema() {
     setSchemaOpen(true);
     if (!schema) {
@@ -205,6 +220,16 @@ export default function Home() {
     }
   }
 
+  /** Read a File as a base64 data URL (for the image-query search payload). */
+  function fileToDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
   async function runCompare() {
     setLoading(true);
     setResults(null);
@@ -212,6 +237,24 @@ export default function Home() {
     setGenLoading({});
     setActiveGenMode(null);
     try {
+      // Image query path: image-to-image vector search.
+      if (queryImage) {
+        const image = await fileToDataUrl(queryImage);
+        const res = await fetch("/api/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query,
+            image,
+            limit: 8,
+            metadataType: mode,
+          }),
+        });
+        const data = await res.json();
+        setResults(data.results ?? []);
+        return;
+      }
+
       const res = await fetch("/api/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -423,10 +466,45 @@ export default function Home() {
             <input
               className="query-input"
               value={query}
-              placeholder={chrome.searchPlaceholder}
+              placeholder={
+                queryImage
+                  ? t("query.imageAttached")
+                  : chrome.searchPlaceholder
+              }
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && onRun()}
+              disabled={!!queryImage}
             />
+            {/* Google-style search-by-image icon (Compare tab only). */}
+            {tab === "compare" && (
+              <>
+                <input
+                  id="query-image-input"
+                  type="file"
+                  accept="image/*"
+                  hidden
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] || null;
+                    if (f) {
+                      setQueryImage(f);
+                      setResults(null);
+                    }
+                    e.currentTarget.value = "";
+                  }}
+                />
+                <button
+                  type="button"
+                  className="btn query-image-btn"
+                  title={t("query.searchByImage")}
+                  onClick={() =>
+                    document.getElementById("query-image-input")?.click()
+                  }
+                >
+                  {/* simple camera glyph */}
+                  <span aria-hidden>📷</span>
+                </button>
+              </>
+            )}
             <button
               className="btn primary"
               onClick={onRun}
@@ -441,6 +519,33 @@ export default function Home() {
               )}
             </button>
           </div>
+
+          {/* Attached query-image chip with preview + remove. */}
+          {tab === "compare" && queryImage && (
+            <div className="query-image-chip">
+              {queryImageUrl && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={queryImageUrl}
+                  alt="query"
+                  className="query-image-thumb"
+                />
+              )}
+              <span className="query-image-name">
+                {t("query.imageMode")}: {queryImage.name}
+              </span>
+              <button
+                type="button"
+                className="btn sm"
+                onClick={() => {
+                  setQueryImage(null);
+                  setResults(null);
+                }}
+              >
+                {t("query.removeImage")}
+              </button>
+            </div>
+          )}
 
           {tab === "compare" && (
             <div className="controls">

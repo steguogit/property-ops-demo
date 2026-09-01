@@ -73,6 +73,19 @@ export interface ChunkDoc {
   /** True when text came from OCR (scanned / image content). */
   ocrUsed?: boolean;
   /**
+   * Handwritten names recovered from this document by the multimodal pass
+   * (HK tenancy signatures: zh / en / mixed). Duplicated onto every chunk of
+   * the document so the Atlas Search lexical arm can recall a tenancy by the
+   * tenant's Chinese OR English handwritten name. Illegible entries are kept
+   * as "[無法識別手寫姓名]".
+   */
+  extractedHandwrittenNames?: {
+    nameText: string;
+    lang: "zh" | "en" | "mixed" | "unknown";
+    bbox: [number, number][];
+    sourceConfidence: number;
+  }[];
+  /**
    * For scanned/image-only PDFs: this chunk represents a rendered PAGE IMAGE
    * embedded directly with voyage-multimodal-3.5 (no OCR). Vector-searchable via
    * `embeddingMultimodal` cross-modally against text queries. `pageImageIndex`
@@ -181,6 +194,36 @@ export interface DocumentDoc {
   errorMessage?: string;
   uploadedAt: string;
   updatedAt: string;
+
+  // ----- External PaddleOCR (backend-separated OCR) — incremental add-on -----
+  // Present only when the file was OCR'd via the external PaddleOCR microservice.
+  // All existing fields above are preserved; this is purely additive.
+  ocr?: {
+    /** Raw (unsorted) layout blocks: bbox + direction + confidence + text. */
+    blocks: {
+      bbox: [number, number][];
+      direction: "vertical" | "horizontal";
+      text: string;
+      confidence: number;
+    }[];
+    /** Reorder-then-join text (mixed-orientation reading order) for embedding. */
+    fullText: string;
+    ocrVersion: string; // e.g. "paddle_layout_v1"
+  };
+
+  // ----- Multilingual handwritten-name recognition (HK tenancy signatures) --
+  // Populated when the multimodal handwriting pass re-read signature/name
+  // blocks. ONE multimodal model handles zh / en / mixed names — no per-language
+  // model split. Illegible names are kept as "[無法識別手寫姓名]" (never dropped).
+  // Indexed for multilingual recall via Atlas Search on
+  // `extractedHandwrittenNames.nameText` so a tenant is found by their Chinese
+  // OR English name.
+  extractedHandwrittenNames?: {
+    nameText: string;
+    lang: "zh" | "en" | "mixed" | "unknown";
+    bbox: [number, number][];
+    sourceConfidence: number;
+  }[];
 }
 
 /** Canonical property identity with historical + bilingual aliases. */

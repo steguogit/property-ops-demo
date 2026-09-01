@@ -72,7 +72,7 @@ function slugify(s: string): string {
   );
 }
 
-function preview(text: string, n = 600): string {
+function preview(text: string, n = 1200): string {
   const t = text.trim();
   return t.length > n ? t.slice(0, n) + "…" : t;
 }
@@ -190,6 +190,10 @@ export async function ingestFile(input: IngestInput): Promise<IngestResult> {
     extractionNote: extraction.note,
     extractedText: text,
     extractedTextPreview: preview(text),
+    ...(extraction.ocr ? { ocr: extraction.ocr } : {}),
+    ...(extraction.extractedHandwrittenNames?.length
+      ? { extractedHandwrittenNames: extraction.extractedHandwrittenNames }
+      : {}),
     chunkCount: chunks.length,
     embeddingStatus: isAtlasEmbedding()
       ? "auto_atlas"
@@ -233,6 +237,9 @@ export async function ingestFile(input: IngestInput): Promise<IngestResult> {
     obsoleteFlag: false,
     effectiveFrom: input.effectiveFrom,
     ocrUsed: extraction.ocrUsed,
+    ...(extraction.extractedHandwrittenNames?.length
+      ? { extractedHandwrittenNames: extraction.extractedHandwrittenNames }
+      : {}),
     relatedDocumentIds: input.relatedDocumentIds ?? [],
     updatedAt: now,
   });
@@ -313,6 +320,31 @@ export async function ingestFile(input: IngestInput): Promise<IngestResult> {
         endMM("ok", `${env.multimodalEmbedModel}`);
       } catch (e) {
         endMM("error", (e as Error).message);
+      }
+    }
+
+    // --- 6c. IMAGE-PIXEL multimodal embedding for image uploads ---
+    // For a standalone image (png/jpg/webp), the chunk text is OCR-derived, so a
+    // text `embeddingMultimodal` (6b) would only be findable by TEXT. To support
+    // image-to-image search (query image → similar uploaded images), we OVERRIDE
+    // the chunk's `embeddingMultimodal` with an embedding of the actual image
+    // PIXELS. Enables `vector-multimodal` search to compare image-to-image.
+    if (fileType === "image" && hasMultimodalEmbed() && records.length) {
+      const endImgEmb = stepTimer("embed_image_pixels");
+      try {
+        const [vec] = await voyageEmbedMultimodalImages(
+          [{ buffer: input.buffer, mime: input.mimeType || "image/png" }],
+          "document"
+        );
+        // A standalone image is a single chunk; store the pixel vector there and
+        // mark it so search/UI can treat it as an image chunk.
+        records[0].embeddingMultimodal = vec;
+        records[0].isPageImage = true;
+        records[0].pageImageIndex = 0;
+        document.embeddingStatus = "voyage";
+        endImgEmb("ok", `image pixels · ${env.multimodalEmbedModel}`);
+      } catch (e) {
+        endImgEmb("error", (e as Error).message);
       }
     }
   }
