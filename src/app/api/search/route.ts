@@ -7,6 +7,7 @@ import {
 } from "@/lib/retrieval";
 import { explainForMode } from "@/lib/explain";
 import { modelsForMode } from "@/lib/models";
+import { datasetFilter } from "@/lib/datasets";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -56,10 +57,17 @@ export async function POST(req: NextRequest) {
       }
       const t0 = Date.now();
       try {
+        const imgDatasetId =
+          typeof body.datasetId === "string" && body.datasetId
+            ? body.datasetId
+            : body.metadataType === "fsi"
+            ? "fsi"
+            : "property";
         const hits = await imageVectorSearch(
           parsed.buffer,
           parsed.mime,
-          limit
+          limit,
+          datasetFilter(imgDatasetId)
         );
         return NextResponse.json({
           query: query || "(image query)",
@@ -100,8 +108,14 @@ export async function POST(req: NextRequest) {
       expandAliases: body.expandAliases ?? true,
       applyPolicies: body.applyPolicies ?? true,
       policyContext: body.policyContext,
-      // FSI EXPANSION: dataset isolation driven by the global industry mode.
-      metadataType: body.metadataType === "fsi" ? "fsi" : "property",
+      // MULTI-DATASET ISOLATION: scope retrieval to the active demo dataset.
+      // Prefer explicit datasetId; fall back to the legacy metadataType mode.
+      datasetId:
+        typeof body.datasetId === "string" && body.datasetId
+          ? body.datasetId
+          : body.metadataType === "fsi"
+          ? "fsi"
+          : "property",
     };
 
     if (!query) {

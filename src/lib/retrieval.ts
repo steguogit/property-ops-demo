@@ -75,6 +75,8 @@ export interface SearchHit {
   correctionNote?: string;
   /** Why this hit was (re)ordered by an approved KnowledgePolicy, if any. */
   policyNote?: string;
+  /** Dataset this hit belongs to (used for in-app isolation fallback + UI). */
+  datasetId?: string;
   // ----- FSI EXPANSION: structured address fields (surfaced for ranking/UI) -----
   metadataType?: string;
   floor_num?: number;
@@ -114,6 +116,7 @@ const PROJECT = {
   effectiveFrom: 1,
   ocrUsed: 1,
   extractedHandwrittenNames: 1,
+  datasetId: 1,
   // FSI EXPANSION: structured address fields.
   metadataType: 1,
   floor_num: 1,
@@ -151,6 +154,7 @@ function toHit(doc: any, rank: number): SearchHit {
     effectiveFrom: doc.effectiveFrom,
     ocrUsed: doc.ocrUsed,
     extractedHandwrittenNames: doc.extractedHandwrittenNames,
+    datasetId: doc.datasetId,
     // FSI EXPANSION: carry structured fields through for floor-aware ranking + UI.
     metadataType: doc.metadataType,
     floor_num: doc.floor_num,
@@ -696,6 +700,7 @@ export async function runSearch(
 // This is the entry point the API uses; runSearch stays as the raw primitive.
 // ---------------------------------------------------------------------------
 import { obsoleteFilter } from "./versioning";
+import { datasetFilter, matchesDataset } from "./datasets";
 import {
   correctionsForQuery,
   applyCorrectionOrdering,
@@ -733,8 +738,16 @@ export interface EnhancedSearchOptions extends HybridOptions {
    * search arms are filtered to that dataset via the `metadataType` field.
    * Property docs seeded before this feature have no metadataType; a "property"
    * request therefore also matches missing values (see filter build below).
+   * @deprecated prefer `datasetId`, which generalises this to arbitrary demos.
    */
   metadataType?: "property" | "fsi";
+  /**
+   * MULTI-DATASET ISOLATION: scope every search arm to a single demo dataset.
+   * Supersedes `metadataType`. When set, only chunks with this datasetId (plus
+   * legacy fallbacks for the built-in datasets) are searched. See
+   * datasets.ts → datasetFilter for the exact predicate (Atlas-filter-safe).
+   */
+  datasetId?: string;
 }
 
 export interface EnhancedSearchResult {
@@ -764,16 +777,15 @@ export async function runSearchEnhanced(
   // Version-aware filter (prefer newest by excluding obsolete by default).
   let filter = obsoleteFilter(includeObsolete);
 
-  // FSI EXPANSION: physically isolate the two datasets by metadataType. For
-  // "property" we also accept docs where the field is absent (legacy seed data).
-  if (opts.metadataType) {
-    // Atlas $vectorSearch filters reject null in $in; use $ne so "property"
-    // also matches legacy docs that predate the metadataType field.
-    const dsFilter =
-      opts.metadataType === "property"
-        ? { metadataType: { $ne: "fsi" } }
-        : { metadataType: "fsi" };
-    filter = filter ? { ...filter, ...dsFilter } : dsFilter;
+  // MULTI-DATASET ISOLATION: physically isolate each demo's data. `datasetId`
+  // is the general mechanism; `metadataType` is kept as a legacy fallback so
+  // callers that haven't migrated still work. The datasetFilter helper handles
+  // legacy/untagged data for the built-in datasets and is Atlas-filter-safe.
+  const effectiveDatasetId =
+    opts.datasetId ?? (opts.metadataType ? opts.metadataType : undefined);
+  if (effectiveDatasetId) {
+    const dsFilter = datasetFilter(effectiveDatasetId);
+    filter = filter ? { $and: [filter, dsFilter] } : dsFilter;
   }
 
   // ----- Knowledge Policy Layer (deterministic, authoritative) -----
@@ -853,7 +865,13 @@ export async function runSearchEnhanced(
     const msg = (e as Error).message ?? "";
     if (/needs to be indexed as filter|Path .* filter/i.test(msg)) {
       usedServerFilter = false;
-      hits = await runSearch(mode, effectiveQuery, fetchLimit, {
+      // Over-fetch widely: we'll filter by dataset + obsolete in-app, so we need
+      // a much larger candidate pool to still return `limit` results after
+      // dropping other datasets' hits.
+      const fallbackLimit = effectiveDatasetId
+        ? Math.max(fetchLimit * 6, 60)
+        : fetchLimit;
+      hits = await runSearch(mode, effectiveQuery, fallbackLimit, {
         ...opts,
         filter: undefined,
       });
@@ -862,9 +880,16 @@ export async function runSearchEnhanced(
     }
   }
 
-  // In-app obsolete filtering (used when the server filter wasn't applied).
-  if (!includeObsolete && !usedServerFilter) {
-    hits = hits.filter((h) => h.obsoleteFlag !== true);
+  // In-app fallback filtering (used when the server-side filter wasn't applied,
+  // e.g. before the Atlas index registers these fields as filters). Without this
+  // both dataset isolation AND obsolete filtering would silently break.
+  if (!usedServerFilter) {
+    if (!includeObsolete) {
+      hits = hits.filter((h) => h.obsoleteFlag !== true);
+    }
+    if (effectiveDatasetId) {
+      hits = hits.filter((h) => matchesDataset(h, effectiveDatasetId));
+    }
   }
 
   // ----- Deterministic Knowledge Policy application on results -----

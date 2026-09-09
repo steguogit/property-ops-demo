@@ -38,6 +38,7 @@ export async function POST(req: NextRequest) {
       buffer,
       fileName: (file as File).name || "upload",
       mimeType: (file as File).type,
+      datasetId: str("datasetId"),
       title: str("title"),
       docType: str("docType"),
       propertyName: str("propertyName"),

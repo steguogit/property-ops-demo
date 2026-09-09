@@ -12,10 +12,16 @@ export async function POST(req: NextRequest) {
     const query: string = (body.query ?? "").trim();
     const limit: number = body.limit ?? 6;
     const includeObsolete: boolean = body.includeObsolete ?? false;
+    const datasetId: string | undefined =
+      typeof body.datasetId === "string" && body.datasetId
+        ? body.datasetId
+        : body.metadataType === "fsi"
+        ? "fsi"
+        : "property";
     if (!query) {
       return NextResponse.json({ error: "query is required" }, { status: 400 });
     }
-    const result = await runRag(query, limit, { includeObsolete });
+    const result = await runRag(query, limit, { includeObsolete, datasetId });
     const explain = explainForMode("rag", query, limit, { includeObsolete });
     return NextResponse.json({
       query,

@@ -95,6 +95,8 @@ async function main() {
     "versionLabel",
     "versionGroupId",
     "documentId",
+    // Multi-dataset isolation: filter every vector search to one demo dataset.
+    "datasetId",
     // FSI EXPANSION: dataset isolation + exact structured filtering.
     "metadataType",
     "district",
@@ -132,6 +134,8 @@ async function main() {
     "versionLabel",
     "versionGroupId",
     "documentId",
+    // Multi-dataset isolation: filter every vector search to one demo dataset.
+    "datasetId",
     // FSI EXPANSION: dataset isolation + exact structured filtering.
     "metadataType",
     "district",
@@ -177,6 +181,8 @@ async function main() {
           versionGroupId: { type: "token" },
           documentId: { type: "token" },
           sourceFileType: { type: "token" },
+          // Multi-dataset isolation (lexical arm): filter to one demo dataset.
+          datasetId: { type: "token" },
           // FSI EXPANSION: dataset isolation + FSI address fields (lexical arm).
           metadataType: { type: "token" },
           raw_address: { type: "string" },

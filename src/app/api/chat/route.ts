@@ -20,6 +20,12 @@ export async function POST(req: NextRequest) {
     const includeObsolete: boolean = body.includeObsolete ?? false;
     const recallFromAllConversations: boolean =
       body.recallFromAllConversations ?? false;
+    const datasetId: string | undefined =
+      typeof body.datasetId === "string" && body.datasetId
+        ? body.datasetId
+        : body.metadataType === "fsi"
+        ? "fsi"
+        : "property";
     let conversationId: string = body.conversationId ?? "";
 
     if (!query) {
@@ -39,6 +45,7 @@ export async function POST(req: NextRequest) {
     const result = await chatRag(conversationId, query, limit, {
       includeObsolete,
       recallFromAllConversations,
+      datasetId,
     });
 
     // Generate a concise topic TITLE from the content on the first turn — async,

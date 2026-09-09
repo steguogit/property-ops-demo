@@ -12,7 +12,8 @@ import { SignaturesTab } from "@/components/SignaturesTab";
 import { useI18n } from "@/lib/i18n";
 // FSI EXPANSION: global industry mode (property/fsi) + presentational config.
 import { useIndustry } from "@/lib/industry-context";
-import { INDUSTRY_CONFIG, INDUSTRY_MODES } from "@/lib/industry";
+// Multi-dataset isolation: active demo dataset for retrieval + uploads.
+import { useDataset } from "@/lib/dataset-context";
 import { renderAnswer } from "@/lib/renderAnswer";
 
 interface MongoFeature {
@@ -144,6 +145,15 @@ export default function Home() {
   const { t, lang, setLang } = useI18n();
   // FSI EXPANSION: active dataset mode + resolved chrome (title/tagline/etc).
   const { mode, setMode, chrome } = useIndustry();
+  // Multi-dataset isolation: the active demo dataset scopes all retrieval +
+  // uploads. For the two built-in demos we keep the industry chrome in sync.
+  const {
+    datasets,
+    activeId: datasetId,
+    setActiveId: setDatasetId,
+    createDataset,
+  } = useDataset();
+  const [creatingDataset, setCreatingDataset] = useState(false);
   const [status, setStatus] = useState<Status | null>(null);
   const [query, setQuery] = useState("");
   // Optional query IMAGE (Compare tab image-in-search-box). When set, Compare
@@ -191,11 +201,11 @@ export default function Home() {
   );
 
   useEffect(() => {
-    fetch("/api/status")
+    fetch(`/api/status?datasetId=${encodeURIComponent(datasetId)}`)
       .then((r) => r.json())
       .then(setStatus)
       .catch(() => setStatus(null));
-  }, []);
+  }, [datasetId]);
 
   // Maintain an object-URL preview for the optional query image.
   useEffect(() => {
@@ -247,7 +257,7 @@ export default function Home() {
             query,
             image,
             limit: 8,
-            metadataType: mode,
+            datasetId,
           }),
         });
         const data = await res.json();
@@ -266,7 +276,7 @@ export default function Home() {
           includeObsolete,
           applyCorrections,
           expandAliases,
-          metadataType: mode, // FSI EXPANSION: dataset isolation
+          datasetId, // multi-dataset isolation
         }),
       });
       const data = await res.json();
@@ -292,7 +302,7 @@ export default function Home() {
           includeObsolete,
           applyCorrections,
           expandAliases,
-          metadataType: mode, // FSI EXPANSION: dataset isolation
+          datasetId, // multi-dataset isolation
         }),
       });
       const data = await res.json();
@@ -311,7 +321,7 @@ export default function Home() {
       const res = await fetch("/api/rag", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, limit: 6, includeObsolete, metadataType: mode }),
+        body: JSON.stringify({ query, limit: 6, includeObsolete, datasetId }),
       });
       const data = await res.json();
       setRag(data);
@@ -354,6 +364,30 @@ export default function Home() {
     }
   }
 
+  // Switch the active demo dataset. For the two built-in datasets we also keep
+  // the industry chrome (title/tagline/placeholder) in sync.
+  function handleDatasetChange(id: string) {
+    setDatasetId(id);
+    if (id === "property" || id === "fsi") setMode(id);
+  }
+
+  // Create a brand-new demo dataset and make it active. Everything uploaded
+  // next lands in this demo, isolated from all other datasets.
+  async function handleNewDemo() {
+    const name = window.prompt(
+      "Name this new demo dataset (e.g. \"HLD Demo\"). Everything you upload while it is active stays isolated to it."
+    );
+    if (!name || !name.trim()) return;
+    setCreatingDataset(true);
+    try {
+      await createDataset(name.trim());
+      // New datasets are not built-in, so they use the generic property chrome.
+      setMode("property");
+    } finally {
+      setCreatingDataset(false);
+    }
+  }
+
   function onRun() {
     if (tab === "compare") runCompare();
     else if (tab === "model-compare") runModelCompare();
@@ -375,21 +409,28 @@ export default function Home() {
           </div>
         </div>
         <div className="status-pills">
-          {/* FSI EXPANSION: global dataset mode switcher. */}
+          {/* Multi-dataset isolation: active demo switcher + New demo. */}
           <select
             className="pill"
-            value={mode}
-            onChange={(e) =>
-              setMode(e.target.value === "fsi" ? "fsi" : "property")
-            }
-            title="Dataset mode"
+            value={datasetId}
+            onChange={(e) => handleDatasetChange(e.target.value)}
+            title="Active demo dataset — retrieval and uploads are scoped to this"
           >
-            {INDUSTRY_MODES.map((m) => (
-              <option key={m} value={m}>
-                {INDUSTRY_CONFIG[m][lang === "zh" ? "zh" : "en"].switchLabel}
+            {datasets.map((d) => (
+              <option key={d.datasetId} value={d.datasetId}>
+                {d.name}
+                {d.documentCount != null ? ` (${d.documentCount})` : ""}
               </option>
             ))}
           </select>
+          <button
+            className="pill"
+            onClick={handleNewDemo}
+            disabled={creatingDataset}
+            title="Create a new isolated demo dataset and switch to it"
+          >
+            {creatingDataset ? "…" : "+ New demo"}
+          </button>
           <button
             className="pill lang-toggle"
             onClick={() => setLang(lang === "en" ? "zh" : "en")}

@@ -16,6 +16,14 @@ export const env = {
   dbName: process.env.MONGODB_DB ?? "property_ops_demo",
   collectionName: process.env.MONGODB_COLLECTION ?? "chunks",
 
+  // Registry of demo datasets. Each dataset physically isolates a demo's
+  // documents + chunks via the `datasetId` field so different demos never mix
+  // in retrieval. Generalises the earlier property/fsi metadataType split.
+  datasetsCollection: process.env.MONGODB_DATASETS_COLLECTION ?? "datasets",
+  // The dataset a document/chunk belongs to when none is specified (legacy data
+  // seeded before datasets existed is treated as this dataset).
+  defaultDatasetId: process.env.DEFAULT_DATASET_ID ?? "property",
+
   // New collections for the document-lifecycle / ingestion iteration.
   documentsCollection: process.env.MONGODB_DOCUMENTS_COLLECTION ?? "documents",
   aliasesCollection: process.env.MONGODB_ALIASES_COLLECTION ?? "property_aliases",

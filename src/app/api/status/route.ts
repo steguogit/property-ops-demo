@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import {
   getCollection,
   getDocumentsCollection,
@@ -6,10 +6,15 @@ import {
   getAliasesCollection,
 } from "@/lib/mongo";
 import { env, hasVoyage, hasReranker, hasLLM } from "@/lib/env";
+import { datasetFilter } from "@/lib/datasets";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  // Optional dataset scoping: when a datasetId is supplied, chunk/document
+  // counts reflect only that demo (so the header shows the active demo's size).
+  const datasetId = req.nextUrl.searchParams.get("datasetId") || undefined;
+  const scope = datasetId ? (datasetFilter(datasetId) as any) : {};
   const status: Record<string, unknown> = {
     db: env.dbName,
     collection: env.collectionName,
@@ -31,15 +36,16 @@ export async function GET() {
     llmModel: env.llmModel,
   };
 
+  status.datasetId = datasetId ?? null;
   try {
     const col = await getCollection();
-    status.chunkCount = await col.countDocuments();
+    status.chunkCount = await col.countDocuments(scope);
     status.mongoConnected = true;
     // Iteration-2 collection counts (best-effort; collections may be empty).
     try {
       status.documentCount = await (
         await getDocumentsCollection()
-      ).countDocuments();
+      ).countDocuments(scope);
       status.correctionCount = await (
         await getCorrectionsCollection()
       ).countDocuments({ active: true });

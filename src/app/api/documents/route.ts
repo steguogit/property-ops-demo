@@ -1,11 +1,12 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { listDocuments } from "@/lib/ingest";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const documents = await listDocuments();
+    const datasetId = req.nextUrl.searchParams.get("datasetId") || undefined;
+    const documents = await listDocuments(datasetId);
     return NextResponse.json({ documents });
   } catch (e) {
     return NextResponse.json(

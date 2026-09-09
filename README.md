@@ -240,6 +240,42 @@ is duplicated onto every chunk so lexical boosting works per-chunk.
 
 ---
 
+## 7a. Multi-dataset isolation, bulk upload & live ingestion view
+
+Three additions make the app safe to demo to multiple customers back-to-back:
+
+- **Isolated demo datasets.** Every document + chunk carries a `datasetId`, and
+  all retrieval arms (vector, hybrid, rerank, RAG, chat, image search) filter on
+  it, so different demos **never mix in search results**. A `datasets` registry
+  collection tracks each demo. Legacy/untagged data maps to the built-in
+  `property` dataset; the old `fsi` split is honoured for backward compatibility.
+  See `src/lib/datasets.ts` (`datasetFilter` is Atlas-`$vectorSearch`-safe).
+- **Dataset switcher + "New demo" in the header.** Pick the active demo from the
+  dropdown, or click **+ New demo** to create a fresh isolated dataset (e.g.
+  "HLD Demo"). It becomes active immediately — everything you upload next lands
+  in it. The Documents tab, header pills (chunk/doc counts), and all search are
+  scoped to the active dataset. No server restart, no reindex.
+  API: `GET/POST /api/datasets`, `PATCH/DELETE /api/datasets/[id]`.
+- **Bulk upload with a live "behind the scenes" view.** The Upload & Review tab
+  now accepts **many files** (multi-select or drag-drop). Files are ingested
+  sequentially (safer for OCR / Voyage rate limits), each into the active
+  dataset, with a per-file **stage rail** animating through the pipeline
+  (extract → OCR → chunk → store → embed → write) and reconciled against the
+  server's real timed steps. Expand **Show full trace** for the exact
+  `ingestion_jobs` step log.
+
+> Deleting a non-built-in dataset removes its documents, chunks, and stored
+> originals (GridFS). The built-in `property` / `fsi` datasets are protected.
+
+### Agentic architecture
+
+A written design + migration plan for evolving ingestion/retrieval/RAG into an
+orchestrated multi-agent system (with a live agent-decision trace) lives in
+[`docs/agentic-architecture.md`](docs/agentic-architecture.md). It is a
+proposal — no runtime behaviour has changed yet.
+
+---
+
 ## 7b. Iteration 2 — Document ingestion, versioning & human correction
 
 This iteration extends the retrieval lab into a **practical near-term operations

@@ -2299,3 +2299,197 @@ mark.hl-strong {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* ---------- Bulk upload: staged files list ---------- */
+.staged-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  text-align: left;
+}
+.staged-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-size: 12.5px;
+}
+.staged-list li:nth-child(odd) {
+  background: rgba(255, 255, 255, 0.03);
+}
+.staged-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.staged-size {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Behind-the-scenes ingestion queue ---------- */
+.ingest-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ingest-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  padding: 12px 14px;
+}
+.ingest-card.uploading {
+  border-color: var(--blue);
+}
+.ingest-card.done {
+  border-color: var(--green-dim);
+}
+.ingest-card.error {
+  border-color: var(--red);
+}
+.ingest-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.ingest-file {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Stage rail: a horizontal set of pipeline stage pips. */
+.stage-rail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.stage-pip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-faint);
+  border: 1px solid var(--border-soft);
+}
+.stage-pip .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  flex: none;
+}
+.stage-pip.pending .dot {
+  background: var(--text-faint);
+}
+.stage-pip.done {
+  color: var(--text-dim);
+  border-color: var(--green-dim);
+}
+.stage-pip.done .dot {
+  background: var(--green);
+}
+.stage-pip.active {
+  color: var(--text);
+  border-color: var(--blue);
+  background: rgba(74, 168, 255, 0.12);
+}
+.stage-pip.active .dot {
+  background: var(--blue);
+  animation: pip-pulse 0.9s ease-in-out infinite;
+}
+@keyframes pip-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.5);
+    opacity: 0.5;
+  }
+}
+.stage-ms {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.ingest-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+/* ---------- Ingestion: honest per-step timing view ---------- */
+.ingest-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  padding: 4px 0;
+}
+.step-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 2px;
+}
+.step-row {
+  font-size: 12px;
+}
+.step-row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 3px;
+}
+.step-name {
+  color: var(--text);
+  cursor: default;
+}
+.step-why-icon {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.step-ms {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+.step-bar-track {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+}
+.step-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--blue), var(--green));
+  transition: width 0.3s ease;
+}
+.step-bar-fill.skipped {
+  background: var(--border);
+}
+.step-note {
+  color: var(--text-faint);
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.4;
+}

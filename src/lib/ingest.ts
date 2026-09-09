@@ -10,6 +10,7 @@ import {
   IngestionJob,
 } from "./mongo";
 import { env, hasVoyage, isAtlasEmbedding, hasMultimodalEmbed } from "./env";
+import { coerceDatasetId } from "./datasets";
 import {
   voyageEmbed,
   voyageEmbedMultimodal,
@@ -35,6 +36,8 @@ export interface IngestInput {
   buffer: Buffer;
   fileName: string;
   mimeType?: string;
+  /** Demo dataset this file belongs to (isolates demos in retrieval). */
+  datasetId?: string;
   // optional metadata supplied by the uploader / review form
   title?: string;
   docType?: string;
@@ -82,6 +85,7 @@ export async function ingestFile(input: IngestInput): Promise<IngestResult> {
   const baseTitle = input.title || input.fileName.replace(/\.[^.]+$/, "");
   const documentId =
     input.documentId || `DOC-${Date.now()}-${slugify(baseTitle)}`;
+  const datasetId = coerceDatasetId(input.datasetId);
   const jobId = `JOB-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
   const steps: IngestionJob["steps"] = [];
@@ -170,6 +174,7 @@ export async function ingestFile(input: IngestInput): Promise<IngestResult> {
   const document: DocumentDoc = {
     _id: documentId,
     documentId,
+    datasetId,
     title: baseTitle,
     docType: input.docType || "uploaded_document",
     propertyName: canonicalName,
@@ -219,6 +224,7 @@ export async function ingestFile(input: IngestInput): Promise<IngestResult> {
     _id: `${documentId}#${i}`,
     docId: documentId,
     documentId,
+    datasetId,
     docType: document.docType,
     title: document.title,
     propertyName: canonicalName,
@@ -435,9 +441,20 @@ async function runSignatureDetectionAsync(
   }
 }
 
-export async function listDocuments(): Promise<DocumentDoc[]> {
+export async function listDocuments(
+  datasetId?: string
+): Promise<DocumentDoc[]> {
   const col = await getDocumentsCollection();
-  return col.find({}).sort({ uploadedAt: -1 }).limit(200).toArray();
+  let filter: Record<string, unknown> = {};
+  if (datasetId) {
+    const { datasetFilter } = await import("./datasets");
+    filter = datasetFilter(datasetId);
+  }
+  return col
+    .find(filter as any)
+    .sort({ uploadedAt: -1 })
+    .limit(500)
+    .toArray();
 }
 
 export async function getDocument(
@@ -510,6 +527,7 @@ export async function reindexDocument(
     buffer,
     fileName: doc.sourceFileName,
     mimeType: doc.mimeType,
+    datasetId: doc.datasetId,
     title: doc.title,
     docType: doc.docType,
     propertyName: doc.propertyName,

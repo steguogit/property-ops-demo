@@ -203,6 +203,7 @@ export async function runRag(
   limit = 6,
   opts: {
     includeObsolete?: boolean;
+    datasetId?: string;
     policyContext?: import("./policy-resolver").QueryContext;
   } = {}
 ): Promise<RagResult> {
@@ -218,6 +219,7 @@ export async function runRag(
   try {
     const r = await runSearchEnhanced("rerank", query, limit, {
       includeObsolete: opts.includeObsolete,
+      datasetId: opts.datasetId,
       policyContext: opts.policyContext,
     });
     hits = r.hits;
@@ -229,6 +231,7 @@ export async function runRag(
   } catch {
     const r = await runSearchEnhanced("hybrid", query, limit, {
       includeObsolete: opts.includeObsolete,
+      datasetId: opts.datasetId,
       policyContext: opts.policyContext,
     });
     hits = r.hits;
@@ -416,6 +419,7 @@ export async function chatRag(
   opts: {
     includeObsolete?: boolean;
     recallFromAllConversations?: boolean;
+    datasetId?: string;
     policyContext?: import("./policy-resolver").QueryContext;
   } = {}
 ): Promise<ChatResult> {
@@ -474,6 +478,7 @@ export async function chatRag(
   try {
     const r = await runSearchEnhanced("rerank", query, limit, {
       includeObsolete: opts.includeObsolete,
+      datasetId: opts.datasetId,
       policyContext: opts.policyContext,
     });
     hits = r.hits;
@@ -485,6 +490,7 @@ export async function chatRag(
   } catch {
     const r = await runSearchEnhanced("hybrid", query, limit, {
       includeObsolete: opts.includeObsolete,
+      datasetId: opts.datasetId,
       policyContext: opts.policyContext,
     });
     hits = r.hits;

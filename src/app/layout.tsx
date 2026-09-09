@@ -3,6 +3,8 @@ import "./globals.css";
 import { I18nProvider } from "@/lib/i18n";
 // FSI EXPANSION: global industry-mode provider.
 import { IndustryProvider } from "@/lib/industry-context";
+// Multi-dataset isolation: active demo dataset provider.
+import { DatasetProvider } from "@/lib/dataset-context";
 
 export const metadata: Metadata = {
   title: "Property Operations Assistant — Atlas Retrieval Demo",
@@ -20,7 +22,9 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <I18nProvider>
-          <IndustryProvider>{children}</IndustryProvider>
+          <IndustryProvider>
+            <DatasetProvider>{children}</DatasetProvider>
+          </IndustryProvider>
         </I18nProvider>
       </body>
     </html>

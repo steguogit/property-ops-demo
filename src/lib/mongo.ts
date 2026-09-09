@@ -96,11 +96,20 @@ export interface ChunkDoc {
   /** Other documents this one references (multi-doc workflows). */
   relatedDocumentIds?: string[];
 
+  // ----- MULTI-DATASET ISOLATION -----
+  /**
+   * The demo dataset this chunk belongs to. Every retrieval arm filters on this
+   * so different demos (e.g. "property", "fsi", a customer-specific "hld" demo)
+   * never mix. Absent == treated as env.defaultDatasetId for legacy data.
+   */
+  datasetId?: string;
+
   // ----- FSI EXPANSION -----
   /**
    * Dataset marker isolating the two demo modes within one collection:
    * "property" (default, original data) | "fsi" (address verification).
    * Absent == treated as "property" for backwards compatibility.
+   * @deprecated superseded by `datasetId`; kept for backward compatibility.
    */
   metadataType?: "property" | "fsi";
   /** FSI: original, un-normalised address string (also stored as chunkText). */
@@ -124,6 +133,26 @@ export interface ChunkDoc {
   location?: { type: "Point"; coordinates: [number, number] };
 }
 
+/**
+ * A demo dataset: an isolated namespace of documents + chunks. Switching the
+ * active dataset in the UI scopes all uploads and retrieval to it, so a demo to
+ * one customer never surfaces another customer's documents.
+ */
+export interface DatasetDoc {
+  _id?: string; // = datasetId (slug), e.g. "hld" or "property"
+  datasetId: string;
+  /** Human-friendly name shown in the switcher, e.g. "HLD Demo". */
+  name: string;
+  description?: string;
+  /** True for the built-in seed datasets (property/fsi) that can't be deleted. */
+  builtin?: boolean;
+  /** Denormalised counts for the UI (refreshed on read). */
+  documentCount?: number;
+  chunkCount?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** Status of an uploaded source file as it moves through ingestion. */
 export type IngestionStatus =
   | "uploaded"
@@ -138,6 +167,8 @@ export type IngestionStatus =
 export interface DocumentDoc {
   _id?: string; // documentId, e.g. "DOC-<timestamp>-<slug>"
   documentId: string;
+  /** The demo dataset this document belongs to (isolates demos in retrieval). */
+  datasetId?: string;
   title: string;
   docType: string;
   propertyName: string;
@@ -635,6 +666,11 @@ export async function getDocumentsCollection(): Promise<
 > {
   const db = await getDb();
   return db.collection<DocumentDoc>(env.documentsCollection);
+}
+
+export async function getDatasetsCollection(): Promise<Collection<DatasetDoc>> {
+  const db = await getDb();
+  return db.collection<DatasetDoc>(env.datasetsCollection);
 }
 
 export async function getAliasesCollection(): Promise<
