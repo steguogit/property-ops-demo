@@ -265,7 +265,7 @@ async function main() {
           similarity: "cosine",
         },
       ];
-  for (const f of ["conversationId", "role"]) {
+  for (const f of ["conversationId", "role", "datasetId"]) {
     convVectorFields.push({ type: "filter", path: f });
   }
   const convVectorIndexDef = {
@@ -283,6 +283,7 @@ async function main() {
           messageText: { type: "string" },
           conversationId: { type: "token" },
           role: { type: "token" },
+          datasetId: { type: "token" },
         },
       },
     },

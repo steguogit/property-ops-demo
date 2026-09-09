@@ -40,7 +40,7 @@ export interface RecalledMessage {
 
 export async function createConversation(
   title?: string,
-  opts: { userId?: string; tenantId?: string } = {}
+  opts: { userId?: string; tenantId?: string; datasetId?: string } = {}
 ): Promise<ConversationDoc> {
   const col = await getConversationsCollection();
   const now = new Date().toISOString();
@@ -48,6 +48,7 @@ export async function createConversation(
   const doc: ConversationDoc = {
     _id: conversationId,
     conversationId,
+    datasetId: opts.datasetId,
     title: title?.trim() || "New conversation",
     userId: opts.userId,
     tenantId: opts.tenantId ?? env.defaultTenantId,
@@ -59,11 +60,27 @@ export async function createConversation(
   return doc;
 }
 
+/** Filter scoping a conversation query to one demo dataset (with legacy fold-in). */
+function convDatasetFilter(datasetId?: string): Record<string, unknown> {
+  if (!datasetId) return {};
+  if (datasetId === env.defaultDatasetId) {
+    return {
+      $or: [{ datasetId }, { datasetId: { $exists: false } }],
+    };
+  }
+  return { datasetId };
+}
+
 export async function listConversations(
-  limit = 50
+  limit = 50,
+  datasetId?: string
 ): Promise<ConversationDoc[]> {
   const col = await getConversationsCollection();
-  return col.find({}).sort({ updatedAt: -1 }).limit(limit).toArray();
+  return col
+    .find(convDatasetFilter(datasetId))
+    .sort({ updatedAt: -1 })
+    .limit(limit)
+    .toArray();
 }
 
 export async function getConversation(
@@ -104,17 +121,21 @@ export async function renameConversation(
  */
 export async function searchConversations(
   q: string,
-  limit = 50
+  limit = 50,
+  datasetId?: string
 ): Promise<ConversationDoc[]> {
   const col = await getConversationsCollection();
   const term = q.trim();
-  if (!term) return listConversations(limit);
+  if (!term) return listConversations(limit, datasetId);
   const rx = new RegExp(
     term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
     "i"
   );
+  const scope = convDatasetFilter(datasetId);
   return col
-    .find({ $or: [{ title: rx }, { lastMessagePreview: rx }] })
+    .find({
+      $and: [{ $or: [{ title: rx }, { lastMessagePreview: rx }] }, scope],
+    })
     .sort({ updatedAt: -1 })
     .limit(limit)
     .toArray();
@@ -249,6 +270,7 @@ export async function appendMessage(
   const doc: ConversationMessageDoc = {
     _id: `${conversationId}#${messageIndex}`,
     conversationId,
+    datasetId: conv?.datasetId,
     messageIndex,
     role,
     messageText,
@@ -308,7 +330,7 @@ const MSG_PROJECT = {
 export async function recallSemantic(
   query: string,
   limit = 5,
-  opts: { conversationId?: string; excludeConversationId?: string } = {}
+  opts: { conversationId?: string; excludeConversationId?: string; datasetId?: string } = {}
 ): Promise<RecalledMessage[]> {
   const col = await getConversationMessagesCollection();
 
@@ -341,7 +363,7 @@ export async function recallSemantic(
 export async function recallKeyword(
   query: string,
   limit = 5,
-  opts: { conversationId?: string; excludeConversationId?: string } = {}
+  opts: { conversationId?: string; excludeConversationId?: string; datasetId?: string } = {}
 ): Promise<RecalledMessage[]> {
   const col = await getConversationMessagesCollection();
   const pipeline: Record<string, unknown>[] = [
@@ -366,11 +388,28 @@ export async function recallKeyword(
 function buildScopeMatch(opts: {
   conversationId?: string;
   excludeConversationId?: string;
+  datasetId?: string;
 }): Record<string, unknown> | null {
-  if (opts.conversationId) return { conversationId: opts.conversationId };
-  if (opts.excludeConversationId)
-    return { conversationId: { $ne: opts.excludeConversationId } };
-  return null;
+  const clauses: Record<string, unknown>[] = [];
+  if (opts.conversationId) {
+    clauses.push({ conversationId: opts.conversationId });
+  } else if (opts.excludeConversationId) {
+    clauses.push({ conversationId: { $ne: opts.excludeConversationId } });
+  }
+  // Dataset isolation: never recall turns from another demo. Messages created
+  // before datasets existed have no datasetId; only fold those into the default
+  // dataset so legacy history still recalls there.
+  if (opts.datasetId) {
+    if (opts.datasetId === env.defaultDatasetId) {
+      clauses.push({
+        $or: [{ datasetId: opts.datasetId }, { datasetId: { $exists: false } }],
+      });
+    } else {
+      clauses.push({ datasetId: opts.datasetId });
+    }
+  }
+  if (!clauses.length) return null;
+  return clauses.length === 1 ? clauses[0] : { $and: clauses };
 }
 
 /**
@@ -380,7 +419,7 @@ function buildScopeMatch(opts: {
 export async function recallMemory(
   query: string,
   limit = 5,
-  opts: { conversationId?: string; excludeConversationId?: string } = {}
+  opts: { conversationId?: string; excludeConversationId?: string; datasetId?: string } = {}
 ): Promise<RecalledMessage[]> {
   const [sem, kw] = await Promise.all([
     recallSemantic(query, limit, opts).catch(() => [] as RecalledMessage[]),

@@ -455,6 +455,9 @@ export async function chatRag(
       conversationId: opts.recallFromAllConversations
         ? undefined
         : conversationId,
+      // Dataset isolation: even "recall from all conversations" must stay within
+      // the active demo, so one demo never leaks memory into another.
+      datasetId: opts.datasetId,
     });
     // Don't recall the exact current question back to itself.
     recalled = recalled.filter((m) => m.messageText !== query);

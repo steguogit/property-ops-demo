@@ -594,6 +594,8 @@ export interface PolicyImpactSimulation {
 export interface ConversationDoc {
   _id?: string;
   conversationId: string;
+  /** Demo dataset this conversation belongs to (scopes memory recall). */
+  datasetId?: string;
   title: string;
   /** True once a topic title was auto-generated (so we don't overwrite a
    *  human-renamed title). */
@@ -613,6 +615,8 @@ export interface ConversationMessageDoc {
   /** `${conversationId}#${messageIndex}` — mirrors the chunk _id convention. */
   _id?: string;
   conversationId: string;
+  /** Demo dataset this message belongs to (scopes cross-conversation recall). */
+  datasetId?: string;
   messageIndex: number;
   role: "user" | "assistant";
   messageText: string;

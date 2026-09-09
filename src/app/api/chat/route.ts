@@ -36,7 +36,8 @@ export async function POST(req: NextRequest) {
     let isNewConversation = false;
     if (!conversationId) {
       const conv = await createConversation(
-        query.length > 48 ? query.slice(0, 45) + "…" : query
+        query.length > 48 ? query.slice(0, 45) + "…" : query,
+        { datasetId }
       );
       conversationId = conv.conversationId;
       isNewConversation = true;

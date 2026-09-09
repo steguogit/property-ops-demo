@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { ResultCard, Hit } from "./ResultCard";
 import { FilePreviewDialog, PreviewTarget } from "./FilePreview";
 import { useI18n } from "@/lib/i18n";
+import { useDataset } from "@/lib/dataset-context";
 import { renderAnswer } from "@/lib/renderAnswer";
 
 interface ConversationSummary {
@@ -98,6 +99,7 @@ interface ChatMessage {
 
 export function ChatTab() {
   const { t } = useI18n();
+  const { activeId: datasetId } = useDataset();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -123,9 +125,10 @@ export function ChatTab() {
   async function loadConversations(search?: string) {
     try {
       const q = (search ?? convSearch).trim();
-      const res = await fetch(
-        `/api/conversations${q ? `?q=${encodeURIComponent(q)}` : ""}`
-      );
+      const params = new URLSearchParams();
+      if (q) params.set("q", q);
+      params.set("datasetId", datasetId);
+      const res = await fetch(`/api/conversations?${params.toString()}`);
       const data = await res.json();
       setConversations(data.conversations ?? []);
     } catch {
@@ -137,6 +140,16 @@ export function ChatTab() {
     loadConversations();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Reload (and reset to a fresh thread) when the active demo dataset changes —
+  // conversations from other demos must not appear here.
+  useEffect(() => {
+    activeConvRef.current = null;
+    setConversationId(null);
+    setMessages([]);
+    loadConversations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [datasetId]);
 
   // Debounced search of the conversation list.
   useEffect(() => {
@@ -196,7 +209,7 @@ export function ChatTab() {
       const res = await fetch("/api/conversations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ datasetId }),
       });
       const data = await res.json();
       const newId = data.conversation?.conversationId ?? null;
@@ -293,6 +306,7 @@ export function ChatTab() {
           query: q,
           conversationId: sendConvId ?? undefined,
           recallFromAllConversations: recallAll,
+          datasetId,
         }),
       });
       const data = await res.json();
