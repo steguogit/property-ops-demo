@@ -6,6 +6,7 @@ import { FilePreviewDialog, PreviewTarget } from "./FilePreview";
 import { useI18n } from "@/lib/i18n";
 import { useDataset } from "@/lib/dataset-context";
 import { renderAnswer } from "@/lib/renderAnswer";
+import { useToast, friendlyError } from "@/lib/toast";
 
 interface ConversationSummary {
   conversationId: string;
@@ -99,17 +100,22 @@ interface ChatMessage {
 
 export function ChatTab() {
   const { t } = useI18n();
+  const toast = useToast();
   const { activeId: datasetId } = useDataset();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [creatingConv, setCreatingConv] = useState(false);
   const [recallAll, setRecallAll] = useState(false);
   const [previewTarget, setPreviewTarget] = useState<PreviewTarget | null>(
     null
   );
   const [convSearch, setConvSearch] = useState("");
+  // Non-blocking banner shown when the conversation list can't be loaded
+  // (typically an Atlas connection issue).
+  const [convLoadError, setConvLoadError] = useState<string | null>(null);
   // Inline rename state: which conversation is being renamed + the draft.
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -129,10 +135,19 @@ export function ChatTab() {
       if (q) params.set("q", q);
       params.set("datasetId", datasetId);
       const res = await fetch(`/api/conversations?${params.toString()}`);
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) {
+        // Don't spam a toast on every debounced search keystroke; a one-off
+        // banner is enough. Still log for debugging.
+        setConvLoadError(data.error ?? `HTTP ${res.status}`);
+        setConversations([]);
+        return;
+      }
+      setConvLoadError(null);
       setConversations(data.conversations ?? []);
-    } catch {
-      /* ignore */
+    } catch (e) {
+      setConvLoadError(friendlyError(e));
+      setConversations([]);
     }
   }
 
@@ -218,7 +233,9 @@ export function ChatTab() {
   }
 
   async function newConversation() {
+    if (creatingConv) return;
     setInput("");
+    setCreatingConv(true);
     // Create the thread immediately so it shows up in the sidebar right away
     // (instead of only appearing after the first message is sent). Switch the
     // active conversation FIRST (via the ref) so any in-flight send() resolving
@@ -229,16 +246,26 @@ export function ChatTab() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ datasetId }),
       });
-      const data = await res.json();
-      const newId = data.conversation?.conversationId ?? null;
+      const data = await res.json().catch(() => ({}));
+      // A failed create (e.g. Atlas connection timeout) returns an error payload
+      // or a non-OK status. Surface it clearly instead of silently doing
+      // nothing, which looked like a dead button.
+      if (!res.ok || data.error || !data.conversation?.conversationId) {
+        toast.error(
+          t("chat.newConvFailed"),
+          data.error ?? `HTTP ${res.status}`
+        );
+        return;
+      }
+      const newId = data.conversation.conversationId;
       activeConvRef.current = newId;
       setConversationId(newId);
       setMessages([]);
       await loadConversations();
-    } catch {
-      activeConvRef.current = null;
-      setConversationId(null);
-      setMessages([]);
+    } catch (e) {
+      toast.error(t("chat.newConvFailed"), e);
+    } finally {
+      setCreatingConv(false);
     }
   }
 
@@ -327,7 +354,12 @@ export function ChatTab() {
           datasetId,
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      // Surface a backend/database failure as a friendly toast (the inline
+      // bubble below also shows it) instead of a cryptic error buried in chat.
+      if (!res.ok || data.error) {
+        toast.error(t("chat.sendFailed"), data.error ?? `HTTP ${res.status}`);
+      }
       const resolvedConvId = sendConvId ?? data.conversationId ?? null;
 
       // First turn of a brand-new thread: adopt the server-created id, but only
@@ -374,6 +406,7 @@ export function ChatTab() {
       }
       await loadConversations();
     } catch (e) {
+      toast.error(t("chat.sendFailed"), e);
       if (activeConvRef.current === sendConvId) {
         setMessages((m) => {
           const copy = [...m];
@@ -381,7 +414,7 @@ export function ChatTab() {
             if (copy[i].role === "assistant" && copy[i].pending) {
               copy[i] = {
                 role: "assistant",
-                messageText: `⚠ ${(e as Error).message}`,
+                messageText: `⚠ ${friendlyError(e)}`,
               };
               break;
             }
@@ -399,8 +432,18 @@ export function ChatTab() {
     <div className="chat-layout">
       {/* Sidebar: conversation list */}
       <aside className="chat-sidebar">
-        <button className="btn primary chat-new" onClick={newConversation}>
-          + {t("chat.newConversation")}
+        <button
+          className="btn primary chat-new"
+          onClick={newConversation}
+          disabled={creatingConv}
+        >
+          {creatingConv ? (
+            <>
+              <span className="loading" /> {t("chat.creating")}
+            </>
+          ) : (
+            `+ ${t("chat.newConversation")}`
+          )}
         </button>
         <input
           className="chat-conv-search"
@@ -408,6 +451,25 @@ export function ChatTab() {
           placeholder={t("chat.searchConversations")}
           onChange={(e) => setConvSearch(e.target.value)}
         />
+        {convLoadError && (
+          <div className="chat-conv-error">
+            <span className="chat-conv-error-ico" aria-hidden>
+              ⚠
+            </span>
+            <div>
+              <div className="chat-conv-error-title">
+                {t("chat.loadError")}
+              </div>
+              <button
+                className="mini-btn"
+                onClick={() => loadConversations()}
+                style={{ marginTop: 6 }}
+              >
+                {t("chat.retry")}
+              </button>
+            </div>
+          </div>
+        )}
         <div className="chat-conv-list">
           {conversations.length === 0 && (
             <div className="empty">

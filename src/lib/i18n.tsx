@@ -83,6 +83,10 @@ export const DICT: Dict = {
   "features.corrections": { en: "Human Corrections", zh: "人工修正" },
   "features.aggregation": { en: "Aggregation Pipeline", zh: "聚合管線" },
   "features.showSchema": { en: "{ } Show data schema", zh: "{ } 顯示資料綱要" },
+  "features.docsTooltip": {
+    en: "Open the MongoDB docs for {name} ↗",
+    zh: "開啟 {name} 的 MongoDB 官方文件 ↗",
+  },
 
   // ----- Query bar -----
   "query.placeholder": {
@@ -417,6 +421,17 @@ export const DICT: Dict = {
 
   // ----- Chat / conversational RAG -----
   "chat.newConversation": { en: "New conversation", zh: "新對話" },
+  "chat.creating": { en: "Creating…", zh: "建立中…" },
+  "chat.newConvFailed": {
+    en: "Couldn't start a new conversation",
+    zh: "無法開始新對話",
+  },
+  "chat.sendFailed": { en: "Couldn't send your message", zh: "無法傳送訊息" },
+  "chat.loadError": {
+    en: "Couldn't load conversations — the database may be unreachable.",
+    zh: "無法載入對話 — 資料庫可能無法連線。",
+  },
+  "chat.retry": { en: "Retry", zh: "重試" },
   "chat.noConversations": { en: "No conversations yet.", zh: "尚無對話。" },
   "chat.noMatches": { en: "No matching conversations.", zh: "沒有符合的對話。" },
   "chat.searchConversations": {
@@ -677,6 +692,14 @@ export const DICT: Dict = {
   "docs.historyEmpty": {
     en: "No ingestion history yet for this demo. Upload a document to see its processing trace here.",
     zh: "此展示尚無匯入歷史。上傳文件後即可在此查看處理軌跡。",
+  },
+  "docs.historyToggle": {
+    en: "Show / hide this document's processing trace",
+    zh: "顯示／隱藏此文件的處理軌跡",
+  },
+  "docs.historyNone": {
+    en: "No processing trace recorded for this document",
+    zh: "此文件沒有記錄處理軌跡",
   },
   "docs.libraryTitle": { en: "Document library ({n})", zh: "文件庫（{n}）" },
   "docs.librarySub": {

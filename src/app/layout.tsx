@@ -5,6 +5,8 @@ import { I18nProvider } from "@/lib/i18n";
 import { IndustryProvider } from "@/lib/industry-context";
 // Multi-dataset isolation: active demo dataset provider.
 import { DatasetProvider } from "@/lib/dataset-context";
+// Global, friendly error/notification toasts.
+import { ToastProvider } from "@/lib/toast";
 
 export const metadata: Metadata = {
   title: "Property Operations Assistant — Atlas Retrieval Demo",
@@ -23,7 +25,9 @@ export default function RootLayout({
       <body>
         <I18nProvider>
           <IndustryProvider>
-            <DatasetProvider>{children}</DatasetProvider>
+            <DatasetProvider>
+              <ToastProvider>{children}</ToastProvider>
+            </DatasetProvider>
           </IndustryProvider>
         </I18nProvider>
       </body>

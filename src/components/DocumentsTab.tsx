@@ -145,8 +145,20 @@ export function DocumentsTab() {
   const [files, setFiles] = useState<File[]>([]);
   const [queue, setQueue] = useState<QueueItem[]>([]);
   // Persisted processing history (survives refresh), scoped to the dataset.
+  // Shown inline, expandable per document-library row (keyed by documentId).
   const [history, setHistory] = useState<IngestionJobView[]>([]);
-  const [historyOpen, setHistoryOpen] = useState(true);
+  const [expandedHistory, setExpandedHistory] = useState<Set<string>>(
+    new Set()
+  );
+
+  function toggleHistory(documentId: string) {
+    setExpandedHistory((prev) => {
+      const next = new Set(prev);
+      if (next.has(documentId)) next.delete(documentId);
+      else next.add(documentId);
+      return next;
+    });
+  }
 
   // upload form metadata (applied to every file in a bulk upload)
   const [meta, setMeta] = useState({
@@ -405,6 +417,13 @@ export function DocumentsTab() {
     }
   }
 
+  // Latest ingestion job per document (history is sorted newest-first), so each
+  // library row can show its own processing trace inline.
+  const historyByDoc = new Map<string, IngestionJobView>();
+  for (const j of history) {
+    if (!historyByDoc.has(j.documentId)) historyByDoc.set(j.documentId, j);
+  }
+
   return (
     <div>
       <div className="panel">
@@ -613,40 +632,6 @@ export function DocumentsTab() {
         )}
       </div>
 
-      {/* Persisted processing history — collapsible, survives refresh. Each
-          document's ingestion trace can be folded up/down independently. */}
-      <div className="panel">
-        <div
-          className="history-panel-head"
-          onClick={() => setHistoryOpen((v) => !v)}
-          role="button"
-          tabIndex={0}
-        >
-          <div>
-            <h2 style={{ margin: 0 }}>
-              {t("docs.historyTitle")}{" "}
-              <span className="history-count">{history.length}</span>
-            </h2>
-            <p className="sub" style={{ margin: "2px 0 0" }}>
-              {t("docs.historySub")}
-            </p>
-          </div>
-          <span className="history-caret">{historyOpen ? "▾" : "▸"}</span>
-        </div>
-        {historyOpen && (
-          <div style={{ marginTop: 12 }}>
-            {!history.length && (
-              <div className="empty">{t("docs.historyEmpty")}</div>
-            )}
-            <div className="history-list">
-              {history.map((j) => (
-                <HistoryCard key={j.jobId} job={j} />
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-
       <div className="panel">
         <h2>{t("docs.libraryTitle", { n: docs.length })}</h2>
         <p className="sub">{t("docs.librarySub")}</p>
@@ -658,6 +643,7 @@ export function DocumentsTab() {
           <table className="doc-table">
             <thead>
               <tr>
+                <th className="doc-expand-col"></th>
                 <th>{t("docs.col.title")}</th>
                 <th>{t("docs.col.type")}</th>
                 <th>{t("docs.col.property")}</th>
@@ -671,8 +657,28 @@ export function DocumentsTab() {
               </tr>
             </thead>
             <tbody>
-              {docs.map((d) => (
-                <tr key={d.documentId}>
+              {docs.map((d) => {
+                const job = historyByDoc.get(d.documentId);
+                const isOpen = expandedHistory.has(d.documentId);
+                return (
+                <React.Fragment key={d.documentId}>
+                <tr className={isOpen ? "doc-row-expanded" : ""}>
+                  <td className="doc-expand-col">
+                    <button
+                      className={`doc-expand-btn ${job ? "" : "disabled"}`}
+                      onClick={() => job && toggleHistory(d.documentId)}
+                      disabled={!job}
+                      title={
+                        job
+                          ? t("docs.historyToggle")
+                          : t("docs.historyNone")
+                      }
+                      aria-label={t("docs.historyToggle")}
+                      aria-expanded={isOpen}
+                    >
+                      {job ? (isOpen ? "▾" : "▸") : "·"}
+                    </button>
+                  </td>
                   <td>
                     <b>{d.title}</b>
                     <div style={{ color: "var(--text-faint)", fontSize: 11 }}>
@@ -761,7 +767,23 @@ export function DocumentsTab() {
                     </div>
                   </td>
                 </tr>
-              ))}
+                {/* Inline processing-history trace for this document. */}
+                {isOpen && job && (
+                  <tr className="doc-history-row">
+                    <td></td>
+                    <td colSpan={9}>
+                      <div className="doc-history-wrap">
+                        <div className="doc-history-caption">
+                          {t("docs.historyTitle")}
+                        </div>
+                        <HistoryCard job={job} defaultOpen />
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                </React.Fragment>
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -1053,8 +1075,14 @@ function ProcessingCard({ item }: { item: QueueItem }) {
  * live upload view) plus an optional raw trace. Reads entirely from the stored
  * `ingestion_jobs` record, so it is available long after the upload finished.
  */
-function HistoryCard({ job }: { job: IngestionJobView }) {
-  const [open, setOpen] = useState(false);
+function HistoryCard({
+  job,
+  defaultOpen = false,
+}: {
+  job: IngestionJobView;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
   const [showTrace, setShowTrace] = useState(false);
   const steps = job.steps ?? [];
   const maxMs = Math.max(1, ...steps.map((s) => s.ms ?? 0));

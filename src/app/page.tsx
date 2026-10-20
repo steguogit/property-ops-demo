@@ -87,6 +87,30 @@ interface Status {
   aliasCount?: number;
 }
 
+// Public MongoDB documentation links for each feature pill in the feature bar.
+// Clicking a pill opens the official docs for that Atlas / MongoDB capability.
+const FEATURE_DOCS: Record<string, string> = {
+  "features.vectorSearch":
+    "https://www.mongodb.com/docs/atlas/atlas-vector-search/vector-search-overview/",
+  "features.atlasSearch": "https://www.mongodb.com/docs/atlas/atlas-search/",
+  "features.rankFusion":
+    "https://www.mongodb.com/docs/manual/reference/operator/aggregation/rankFusion/",
+  "features.autoEmbed":
+    "https://www.mongodb.com/docs/atlas/atlas-vector-search/automatic-embedding/",
+  "features.voyageEmbed":
+    "https://www.mongodb.com/docs/atlas/atlas-vector-search/create-embeddings/",
+  "features.reranker":
+    "https://www.mongodb.com/docs/atlas/atlas-vector-search/rerank-results/",
+  "features.ingestion":
+    "https://www.mongodb.com/docs/drivers/node/current/fundamentals/gridfs/",
+  "features.versionFilters":
+    "https://www.mongodb.com/docs/atlas/atlas-vector-search/vector-search-stage/#atlas-vector-search-pre-filter",
+  "features.corrections":
+    "https://www.mongodb.com/docs/manual/tutorial/update-documents/",
+  "features.aggregation":
+    "https://www.mongodb.com/docs/manual/aggregation/",
+};
+
 const SAMPLES = [
   { n: 1, label: "Alias resolution", q: "Is YOHO Mall the same property as 形點?" },
   {
@@ -406,10 +430,13 @@ export default function Home() {
             <p>{chrome.tagline}</p>
           </div>
         </div>
-        <div className="status-pills">
+        {/* All header controls + connectivity on ONE line: dataset switcher +
+            New demo + language toggle stay fixed; the status/config pills follow
+            and scroll horizontally if the line runs out of room. */}
+        <div className="header-controls">
           {/* Multi-dataset isolation: active demo switcher + New demo. */}
           <select
-            className="pill"
+            className="pill dataset-select"
             value={datasetId}
             onChange={(e) => handleDatasetChange(e.target.value)}
             title="Active demo dataset — retrieval and uploads are scoped to this"
@@ -436,41 +463,96 @@ export default function Home() {
           >
             {t("header.langToggle")}
           </button>
-          <span className={`pill ${status?.mongoConnected ? "ok" : "bad"}`}>
-            {status?.mongoConnected
-              ? t("pill.atlasChunks", { n: status.chunkCount })
-              : t("pill.atlasDisconnected")}
-          </span>
-          {status?.mongoConnected && status.documentCount != null && (
-            <span className="pill ok">
-              {t("pill.docs", { n: status.documentCount })}
-            </span>
-          )}
-          {status?.mongoConnected && !!status.correctionCount && (
-            <span className="pill warn">
-              {t("pill.corrections", { n: status.correctionCount })}
-            </span>
-          )}
-          {status && (
-            <span className="pill ok">
-              {t("pill.embed", { model: status.embedModel })}
-            </span>
-          )}
-          <span className={`pill ${status?.voyageConfigured ? "ok" : "warn"}`}>
-            {status?.voyageConfigured
-              ? t("pill.rerank", { model: status.rerankModel })
-              : t("pill.rerankOff")}
-          </span>
-          <span className={`pill ${status?.llmConfigured ? "ok" : "warn"}`}>
-            {status?.llmConfigured
-              ? t("pill.rag", { model: status.llmModel ?? "" })
-              : t("pill.ragExtractive")}
-          </span>
+
+          {/* Connectivity / configuration status — compact flat icons. Full
+              description appears in a styled pop-up tooltip on hover. */}
+          <div className="status-pills">
+            {(() => {
+              const atlasTip = status?.mongoConnected
+                ? t("pill.atlasChunks", { n: status.chunkCount })
+                : t("pill.atlasDisconnected");
+              const rerankTip = status?.voyageConfigured
+                ? t("pill.rerank", { model: status.rerankModel })
+                : t("pill.rerankOff");
+              const ragTip = status?.llmConfigured
+                ? t("pill.rag", { model: status.llmModel ?? "" })
+                : t("pill.ragExtractive");
+              return (
+                <>
+                  <span
+                    className={`pill-ico has-tip ${
+                      status?.mongoConnected ? "ok" : "bad"
+                    }`}
+                    data-tip={atlasTip}
+                    aria-label={atlasTip}
+                    role="img"
+                  >
+                    🗄️
+                  </span>
+                  {status?.mongoConnected && status.documentCount != null && (
+                    <span
+                      className="pill-ico has-tip ok"
+                      data-tip={t("pill.docs", { n: status.documentCount })}
+                      aria-label={t("pill.docs", { n: status.documentCount })}
+                      role="img"
+                    >
+                      📄
+                    </span>
+                  )}
+                  {status?.mongoConnected && !!status.correctionCount && (
+                    <span
+                      className="pill-ico has-tip warn"
+                      data-tip={t("pill.corrections", {
+                        n: status.correctionCount,
+                      })}
+                      aria-label={t("pill.corrections", {
+                        n: status.correctionCount,
+                      })}
+                      role="img"
+                    >
+                      ⚑
+                    </span>
+                  )}
+                  {status && (
+                    <span
+                      className="pill-ico has-tip ok"
+                      data-tip={t("pill.embed", { model: status.embedModel })}
+                      aria-label={t("pill.embed", { model: status.embedModel })}
+                      role="img"
+                    >
+                      🧬
+                    </span>
+                  )}
+                  <span
+                    className={`pill-ico has-tip ${
+                      status?.voyageConfigured ? "ok" : "warn"
+                    }`}
+                    data-tip={rerankTip}
+                    aria-label={rerankTip}
+                    role="img"
+                  >
+                    🎯
+                  </span>
+                  <span
+                    className={`pill-ico has-tip tip-right ${
+                      status?.llmConfigured ? "ok" : "warn"
+                    }`}
+                    data-tip={ragTip}
+                    aria-label={ragTip}
+                    role="img"
+                  >
+                    💬
+                  </span>
+                </>
+              );
+            })()}
+          </div>
         </div>
         </div>
 
         {/* Compact single-line MongoDB-features strip, integrated in the
-            header. Horizontally scrollable so it never wraps to a second row. */}
+            header. Horizontally scrollable so it never wraps to a second row.
+            Each tag links to the public MongoDB documentation for that feature. */}
         <div className="feature-bar">
           <span className="label">{t("features.label")}</span>
           <div className="feature-tags">
@@ -487,10 +569,20 @@ export default function Home() {
               "features.corrections",
               "features.aggregation",
             ].map((f) => (
-              <span className="feature-tag" key={f}>
+              <a
+                className="feature-tag"
+                key={f}
+                href={FEATURE_DOCS[f]}
+                target="_blank"
+                rel="noreferrer"
+                title={t("features.docsTooltip", { name: t(f) })}
+              >
                 <span className="ico" />
                 {t(f)}
-              </span>
+                <span className="feature-doc-ico" aria-hidden>
+                  ↗
+                </span>
+              </a>
             ))}
           </div>
           <button className="schema-link" onClick={openSchema}>
