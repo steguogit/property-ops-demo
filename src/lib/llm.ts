@@ -1,4 +1,5 @@
 import { env, hasLLM } from "./env";
+import { recordUsage, estimateTokens } from "./usage";
 
 // Small shared LLM chat helper. Supports the two shapes the demo already uses:
 //   - Grove gateway (api-key header)
@@ -42,8 +43,19 @@ export async function llmChat(
   }
   const json = (await res.json()) as {
     choices: { message: { content: string } }[];
+    usage?: import("./usage").RawUsage;
   };
-  return json.choices[0]?.message?.content ?? "";
+  const content = json.choices[0]?.message?.content ?? "";
+  void recordUsage({
+    operation: "proposal",
+    provider: "llm",
+    model: env.llmModel,
+    kind: "chat",
+    usage: json.usage,
+    fallbackTotal:
+      estimateTokens(JSON.stringify(messages)) + estimateTokens(content),
+  });
+  return content;
 }
 
 /** Best-effort JSON extraction from a possibly-fenced LLM response. */

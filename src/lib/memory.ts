@@ -4,6 +4,7 @@ import {
   getConversationMessagesCollection,
   ConversationDoc,
   ConversationMessageDoc,
+  AssistantTurnMeta,
 } from "./mongo";
 import { env, isAtlasEmbedding, hasVoyage, hasLLM } from "./env";
 import { voyageEmbed, voyageEmbedOne } from "./voyage";
@@ -258,7 +259,7 @@ export async function appendMessage(
   conversationId: string,
   role: "user" | "assistant",
   messageText: string,
-  opts: { sourceDocIds?: string[] } = {}
+  opts: { sourceDocIds?: string[]; assistantMeta?: AssistantTurnMeta } = {}
 ): Promise<ConversationMessageDoc> {
   const convCol = await getConversationsCollection();
   const msgCol = await getConversationMessagesCollection();
@@ -276,6 +277,7 @@ export async function appendMessage(
     messageText,
     createdAt: now,
     sourceDocIds: opts.sourceDocIds,
+    assistantMeta: opts.assistantMeta,
   };
 
   // Explicit-vector strategies embed client-side; Atlas auto-embed handles the

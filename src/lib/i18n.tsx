@@ -124,11 +124,53 @@ export const DICT: Dict = {
   },
 
   // ----- Tabs -----
+  "tab.dashboard": { en: "Dashboard", zh: "儀表板" },
   "tab.compare": { en: "Compare retrieval modes", zh: "比較檢索模式" },
   "tab.modelCompare": { en: "Compare embedding models", zh: "比較嵌入模型" },
   "tab.rag": { en: "RAG Q&A", zh: "RAG 問答" },
   "tab.chat": { en: "Conversational RAG", zh: "對話式 RAG" },
   "tab.signatures": { en: "Signature Comparison", zh: "簽名對比" },
+
+  // ----- Dashboard -----
+  "dash.title": { en: "Operations Dashboard", zh: "營運儀表板" },
+  "dash.sub": {
+    en: "Key metrics for the active demo",
+    zh: "目前展示資料集的關鍵指標",
+  },
+  "dash.refresh": { en: "Refresh", zh: "重新整理" },
+  "dash.error": { en: "Failed to load metrics", zh: "載入指標失敗" },
+  "dash.kpi.documents": { en: "Documents", zh: "文件" },
+  "dash.kpi.chunks": { en: "Chunks", zh: "片段" },
+  "dash.kpi.aliases": { en: "Aliases", zh: "別名" },
+  "dash.kpi.tokens": { en: "Tokens used", zh: "已用代幣" },
+  "dash.kpi.calls": { en: "calls", zh: "次呼叫" },
+  "dash.kpi.needsReview": { en: "Needs review", zh: "待審核" },
+  "dash.kpi.obsolete": { en: "Obsolete docs", zh: "過時文件" },
+  "dash.kpi.current": { en: "current", zh: "現行" },
+  "dash.corpus.title": { en: "Corpus", zh: "語料庫" },
+  "dash.corpus.tag": { en: "content", zh: "內容" },
+  "dash.corpus.byType": { en: "By document type", zh: "依文件類型" },
+  "dash.corpus.byProperty": { en: "By property", zh: "依物業" },
+  "dash.corpus.byFile": { en: "By file type", zh: "依檔案類型" },
+  "dash.ingest.title": { en: "Ingestion", zh: "文件匯入" },
+  "dash.ingest.jobs": { en: "jobs", zh: "項作業" },
+  "dash.ingest.embedStatus": { en: "Embedding status", zh: "嵌入狀態" },
+  "dash.ingest.avgStep": {
+    en: "Avg time per pipeline step",
+    zh: "各管線步驟平均耗時",
+  },
+  "dash.gov.title": { en: "Review & Governance", zh: "審核與治理" },
+  "dash.gov.tag": { en: "quality", zh: "品質" },
+  "dash.gov.review": { en: "Review status", zh: "審核狀態" },
+  "dash.gov.signature": { en: "Signature status", zh: "簽名狀態" },
+  "dash.gov.policies": { en: "active policies", zh: "項生效政策" },
+  "dash.gov.corrections": { en: "active corrections", zh: "項生效修正" },
+  "dash.tokens.title": { en: "Token Usage", zh: "代幣用量" },
+  "dash.tokens.byOperation": { en: "By operation", zh: "依操作" },
+  "dash.tokens.byProvider": { en: "By provider", zh: "依供應商" },
+  "dash.tokens.byModel": { en: "By model", zh: "依模型" },
+  "dash.recent.title": { en: "Recent uploads", zh: "最近上傳" },
+  "dash.activity.title": { en: "Recent model activity", zh: "最近模型活動" },
 
   // ----- Signature comparison -----
   "sig.enrollTitle": { en: "Enrol reference signatures", zh: "登記參考簽名" },
@@ -627,6 +669,15 @@ export const DICT: Dict = {
   "docs.uploadBtn": { en: "Upload & ingest", zh: "上傳並匯入" },
   "docs.uploading": { en: "Uploading…", zh: "上傳中…" },
   "docs.chooseFirst": { en: "Choose a file first.", zh: "請先選擇檔案。" },
+  "docs.historyTitle": { en: "Processing history", zh: "處理歷史" },
+  "docs.historySub": {
+    en: "Every document's ingestion trace, kept after upload — expand any row to see the real per-step pipeline timings.",
+    zh: "每份文件的匯入處理軌跡，上傳後持續保留 — 展開任一列即可查看各步驟的實際耗時。",
+  },
+  "docs.historyEmpty": {
+    en: "No ingestion history yet for this demo. Upload a document to see its processing trace here.",
+    zh: "此展示尚無匯入歷史。上傳文件後即可在此查看處理軌跡。",
+  },
   "docs.libraryTitle": { en: "Document library ({n})", zh: "文件庫（{n}）" },
   "docs.librarySub": {
     en: "Reviewable view of every ingested document — file type, OCR, chunk count, embedding + version status, and human review state.",
@@ -715,6 +766,18 @@ export const DICT: Dict = {
     zh: "無法內嵌顯示此檔案類型，請下載後檢視。",
   },
   "preview.failed": { en: "Failed to load preview.", zh: "載入預覽失敗。" },
+  "preview.jumpedToPassage": {
+    en: "Jumped to the exact retrieved passage (highlighted below).",
+    zh: "已跳至檢索到的段落（下方以高亮標示）。",
+  },
+  "preview.passageNotFound": {
+    en: "Couldn't pinpoint the exact passage in the source — showing the full document.",
+    zh: "無法在來源中精確定位該段落 — 顯示完整文件。",
+  },
+  "preview.retrievedPassage": {
+    en: "Retrieved passage",
+    zh: "檢索到的段落",
+  },
 
   // ----- Policies tab -----
   "pol.title": { en: "Knowledge Policy Layer", zh: "知識政策層" },
@@ -748,6 +811,19 @@ export const DICT: Dict = {
   "card.obsolete": { en: "obsolete", zh: "已淘汰" },
   "card.ocr": { en: "OCR", zh: "OCR" },
   "card.previewType": { en: "⛶ Preview {type}", zh: "⛶ 預覽 {type}" },
+  "card.viewDoc": { en: "View MongoDB document", zh: "檢視 MongoDB 文件" },
+
+  // ----- Document (chunk) JSON modal -----
+  "docModal.title": { en: "MongoDB document", zh: "MongoDB 文件" },
+  "docModal.subtitle": {
+    en: "The actual document stored in the {collection} collection.",
+    zh: "儲存於 {collection} 集合中的實際文件。",
+  },
+  "docModal.loading": { en: "Loading document…", zh: "正在載入文件…" },
+  "docModal.meta": {
+    en: "db.{collection}.findOne({ _id: \"{id}\" })",
+    zh: "db.{collection}.findOne({ _id: \"{id}\" })",
+  },
 };
 
 interface I18nContextValue {

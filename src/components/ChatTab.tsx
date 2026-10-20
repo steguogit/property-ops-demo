@@ -175,11 +175,29 @@ export function ChatTab() {
       const data = await res.json();
       // Ignore if the user switched away while this was loading.
       if (activeConvRef.current !== id) return;
-      const loaded: ChatMessage[] = (data.messages ?? []).map((m: any) => ({
-        role: m.role,
-        messageText: m.messageText,
-        messageIndex: m.messageIndex,
-      }));
+      const loaded: ChatMessage[] = (data.messages ?? []).map((m: any) => {
+        const meta = m.assistantMeta ?? {};
+        return {
+          role: m.role,
+          messageText: m.messageText,
+          messageIndex: m.messageIndex,
+          // Rehydrate the assistant turn's rich extras (persisted server-side)
+          // so pipeline steps, recalled memory, source evidence and models
+          // survive a page refresh / reopening the conversation.
+          sources: meta.sources,
+          recalled: meta.recalled,
+          steps: meta.steps,
+          models: meta.models,
+          llmUsed: meta.llmUsed,
+          mode: meta.mode,
+          // The user question that this answer responded to (for highlighting)
+          // is the immediately preceding user turn.
+          query:
+            m.role === "assistant"
+              ? (data.messages ?? [])[m.messageIndex - 1]?.messageText
+              : undefined,
+        };
+      });
       // If this thread has a still-in-flight answer, the assistant turn isn't
       // persisted yet — re-show the optimistic user turn + thinking bubble so
       // the "thinking…" spinner doesn't vanish when switching back.

@@ -545,3 +545,73 @@ export async function reindexDocument(
     existingOriginalFileId: doc.originalFileId,
   });
 }
+
+/** A persisted ingestion-job record enriched with its document's current info. */
+export interface IngestionJobView extends IngestionJob {
+  /** Live document fields (may be undefined if the doc was later deleted). */
+  docTitle?: string;
+  sourceFileType?: string;
+  chunkCount?: number;
+  ocrUsed?: boolean;
+  datasetId?: string;
+}
+
+/**
+ * List the persisted ingestion history (newest first), scoped to a demo dataset
+ * when provided. Scoping is done by joining each job's `documentId` against the
+ * documents collection (jobs themselves don't carry a datasetId). Jobs whose
+ * document was deleted are still returned (they show as "(document removed)")
+ * UNLESS a datasetId filter is active, in which case they're excluded because we
+ * can't attribute them to the active demo.
+ */
+export async function listIngestionJobs(
+  datasetId?: string,
+  limit = 100
+): Promise<IngestionJobView[]> {
+  const jobsCol = await getIngestionJobsCollection();
+  const docsCol = await getDocumentsCollection();
+
+  const jobs = await jobsCol
+    .find({})
+    .sort({ createdAt: -1 })
+    .limit(400)
+    .toArray();
+  if (!jobs.length) return [];
+
+  const docIds = [...new Set(jobs.map((j) => j.documentId))];
+  const docs = await docsCol
+    .find({ documentId: { $in: docIds } } as any)
+    .project({
+      documentId: 1,
+      title: 1,
+      sourceFileType: 1,
+      chunkCount: 1,
+      ocrUsed: 1,
+      datasetId: 1,
+      _id: 0,
+    })
+    .toArray();
+  const byId = new Map(docs.map((d: any) => [d.documentId, d]));
+
+  const views: IngestionJobView[] = [];
+  for (const j of jobs) {
+    const d: any = byId.get(j.documentId);
+    if (datasetId) {
+      // Scope to active demo: skip jobs whose doc is missing or in another demo.
+      if (!d) continue;
+      const dId = d.datasetId ?? "property";
+      const target = datasetId === "fsi" ? ["fsi"] : [datasetId];
+      if (!target.includes(dId)) continue;
+    }
+    views.push({
+      ...(j as IngestionJob),
+      docTitle: d?.title,
+      sourceFileType: d?.sourceFileType,
+      chunkCount: d?.chunkCount,
+      ocrUsed: d?.ocrUsed,
+      datasetId: d?.datasetId,
+    });
+    if (views.length >= limit) break;
+  }
+  return views;
+}

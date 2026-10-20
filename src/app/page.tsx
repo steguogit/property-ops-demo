@@ -9,6 +9,7 @@ import { PoliciesTab } from "@/components/PoliciesTab";
 import { FilePreviewDialog, PreviewTarget } from "@/components/FilePreview";
 import { ChatTab } from "@/components/ChatTab";
 import { SignaturesTab } from "@/components/SignaturesTab";
+import { DashboardTab } from "@/components/DashboardTab";
 import { useI18n } from "@/lib/i18n";
 // FSI EXPANSION: global industry mode (property/fsi) + presentational config.
 import { useIndustry } from "@/lib/industry-context";
@@ -161,9 +162,9 @@ export default function Home() {
   const [queryImage, setQueryImage] = useState<File | null>(null);
   const [queryImageUrl, setQueryImageUrl] = useState<string | null>(null);
   const [tab, setTab] = useState<
+    | "dashboard"
     | "compare"
     | "model-compare"
-    | "rag"
     | "chat"
     | "signatures"
     | "documents"
@@ -174,9 +175,6 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<ModeResult[] | null>(null);
   const [modelResults, setModelResults] = useState<ModeResult[] | null>(null);
-
-  const [ragLoading, setRagLoading] = useState(false);
-  const [rag, setRag] = useState<RagResponse | null>(null);
 
   // "Generate answer from these results" — per-compare-column grounded answers,
   // reusing already-retrieved candidates (no re-retrieval).
@@ -199,6 +197,10 @@ export default function Home() {
   const [previewTarget, setPreviewTarget] = useState<PreviewTarget | null>(
     null
   );
+  // "View MongoDB document" dialog — shows the actual chunk document shape.
+  const [docModalOpen, setDocModalOpen] = useState(false);
+  const [docModal, setDocModal] = useState<any | null>(null);
+  const [docModalId, setDocModalId] = useState<string | null>(null);
 
   useEffect(() => {
     fetch(`/api/status?datasetId=${encodeURIComponent(datasetId)}`)
@@ -227,6 +229,20 @@ export default function Home() {
       } catch {
         setSchema({ error: "Failed to load schema" });
       }
+    }
+  }
+
+  // Open the "View MongoDB document" dialog for a chunk (_id = docId#chunkIndex)
+  // and fetch its actual stored document from Atlas.
+  async function openDocModal(id: string) {
+    setDocModalId(id);
+    setDocModal(null);
+    setDocModalOpen(true);
+    try {
+      const res = await fetch(`/api/chunk/${encodeURIComponent(id)}`);
+      setDocModal(await res.json());
+    } catch {
+      setDocModal({ error: "Failed to load document" });
     }
   }
 
@@ -314,24 +330,6 @@ export default function Home() {
     }
   }
 
-  async function runRag() {
-    setRagLoading(true);
-    setRag(null);
-    try {
-      const res = await fetch("/api/rag", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, limit: 6, includeObsolete, datasetId }),
-      });
-      const data = await res.json();
-      setRag(data);
-    } catch (e) {
-      setRag(null);
-    } finally {
-      setRagLoading(false);
-    }
-  }
-
   // Generate a grounded answer directly from a compare column's candidates,
   // without re-running retrieval.
   async function generateFrom(r: ModeResult) {
@@ -391,15 +389,15 @@ export default function Home() {
   function onRun() {
     if (tab === "compare") runCompare();
     else if (tab === "model-compare") runModelCompare();
-    else if (tab === "rag") runRag();
   }
 
   const showQueryBar =
-    tab === "compare" || tab === "model-compare" || tab === "rag";
+    tab === "compare" || tab === "model-compare";
 
   return (
     <div className="app">
       <header className="header">
+        <div className="header-top">
         <div className="brand">
           <div className="leaf">{mode === "fsi" ? "FSI" : "PM"}</div>
           <div>
@@ -469,36 +467,40 @@ export default function Home() {
               : t("pill.ragExtractive")}
           </span>
         </div>
+        </div>
+
+        {/* Compact single-line MongoDB-features strip, integrated in the
+            header. Horizontally scrollable so it never wraps to a second row. */}
+        <div className="feature-bar">
+          <span className="label">{t("features.label")}</span>
+          <div className="feature-tags">
+            {[
+              "features.vectorSearch",
+              "features.atlasSearch",
+              "features.rankFusion",
+              status?.embeddingStrategy === "atlas"
+                ? "features.autoEmbed"
+                : "features.voyageEmbed",
+              "features.reranker",
+              "features.ingestion",
+              "features.versionFilters",
+              "features.corrections",
+              "features.aggregation",
+            ].map((f) => (
+              <span className="feature-tag" key={f}>
+                <span className="ico" />
+                {t(f)}
+              </span>
+            ))}
+          </div>
+          <button className="schema-link" onClick={openSchema}>
+            {t("features.showSchema")}
+          </button>
+        </div>
       </header>
 
       <div className="message">
         <b>{t("intro.bold")}</b> {t("intro.rest")}
-      </div>
-
-      <div className="feature-bar">
-        <span className="label">{t("features.label")}</span>
-        {[
-          "features.vectorSearch",
-          "features.atlasSearch",
-          "features.rankFusion",
-          status?.embeddingStrategy === "atlas"
-            ? "features.autoEmbed"
-            : "features.voyageEmbed",
-          "features.reranker",
-          "features.ingestion",
-          "features.versionFilters",
-          "features.corrections",
-          "features.aggregation",
-        ].map((f) => (
-          <span className="feature-tag" key={f}>
-            <span className="ico" />
-            {t(f)}
-          </span>
-        ))}
-        <span className="spacer" />
-        <button className="schema-link" onClick={openSchema}>
-          {t("features.showSchema")}
-        </button>
       </div>
 
       {showQueryBar && (
@@ -549,14 +551,12 @@ export default function Home() {
             <button
               className="btn primary"
               onClick={onRun}
-              disabled={loading || ragLoading}
+              disabled={loading}
             >
-              {loading || ragLoading ? (
+              {loading ? (
                 <span className="loading" />
-              ) : tab === "compare" || tab === "model-compare" ? (
-                t("query.compare")
               ) : (
-                t("query.answer")
+                t("query.compare")
               )}
             </button>
           </div>
@@ -656,6 +656,12 @@ export default function Home() {
 
       <div className="tabs">
         <div
+          className={`tab ${tab === "dashboard" ? "active" : ""}`}
+          onClick={() => setTab("dashboard")}
+        >
+          {t("tab.dashboard")}
+        </div>
+        <div
           className={`tab ${tab === "compare" ? "active" : ""}`}
           onClick={() => setTab("compare")}
         >
@@ -666,12 +672,6 @@ export default function Home() {
           onClick={() => setTab("model-compare")}
         >
           {t("tab.modelCompare")}
-        </div>
-        <div
-          className={`tab ${tab === "rag" ? "active" : ""}`}
-          onClick={() => setTab("rag")}
-        >
-          {t("tab.rag")}
         </div>
         <div
           className={`tab ${tab === "chat" ? "active" : ""}`}
@@ -705,6 +705,7 @@ export default function Home() {
         </div>
       </div>
 
+      {tab === "dashboard" && <DashboardTab onNavigate={setTab} />}
       {tab === "chat" && <ChatTab />}
       {tab === "signatures" && <SignaturesTab />}
       {tab === "documents" && <DocumentsTab />}
@@ -871,6 +872,7 @@ export default function Home() {
                     <ResultCard
                       hit={h}
                       onPreview={setPreviewTarget}
+                      onViewDoc={openDocModal}
                       query={query}
                       key={`${h.docId}#${h.chunkIndex}`}
                     />
@@ -942,6 +944,7 @@ export default function Home() {
                     <ResultCard
                       hit={h}
                       onPreview={setPreviewTarget}
+                      onViewDoc={openDocModal}
                       query={query}
                       key={`${h.docId}#${h.chunkIndex}`}
                     />
@@ -950,100 +953,6 @@ export default function Home() {
               </div>
             );
           })}
-        </div>
-      )}
-
-      {tab === "rag" && (
-        <div className="rag-wrap">
-          {!rag && !ragLoading && (
-            <div className="empty">{t("rag.empty")}</div>
-          )}
-          {ragLoading && (
-            <div className="answer">
-              <span className="loading" /> {t("rag.generating")}
-            </div>
-          )}
-          {rag && (
-            <>
-              <div className="answer">
-                <h3>
-                  {t("rag.groundedAnswer")}
-                  <span className="badge type">
-                    {t("rag.contextVia", { mode: rag.mode })}
-                  </span>
-                  <span className="badge">
-                    {rag.llmUsed ? t("rag.llm") : t("rag.extractive")}
-                  </span>
-                  {rag.explain && (
-                    <button
-                      className="mini-btn"
-                      style={{ marginLeft: "auto" }}
-                      onClick={() => setExplainModal(rag.explain!)}
-                    >
-                      {t("rag.showPipeline")}
-                    </button>
-                  )}
-                </h3>
-                {!!rag.models?.length && (
-                  <div className="mode-models">
-                    <span className="mode-models-label">
-                      {t("common.modelsUsed")}
-                    </span>
-                    {rag.models.map((mo, j) => (
-                      <span className="model-chip" key={j}>
-                        <span className="model-role">{mo.role}</span>
-                        {mo.name}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                <div className="text">{renderAnswer(rag.answer)}</div>
-                {(rag.expandedAliases?.length ||
-                  rag.appliedCorrections?.applied?.length) && (
-                  <div
-                    className="notice info"
-                    style={{ marginTop: 12, marginBottom: 0 }}
-                  >
-                    {rag.expandedAliases?.length ? (
-                      <div>
-                        <b>{t("rag.aliasExpansion")}</b>{" "}
-                        {rag.expandedAliases.join(", ")}
-                      </div>
-                    ) : null}
-                    {rag.appliedCorrections?.applied?.length ? (
-                      <div>
-                        <b>{t("rag.correctionsApplied")}</b>{" "}
-                        {rag.appliedCorrections.applied
-                          .map((c) => c.summary)
-                          .join(" · ")}
-                      </div>
-                    ) : null}
-                  </div>
-                )}
-              </div>
-              <div className="sources-title">
-                {t("rag.sourceEvidence", { n: rag.sources.length })}
-                <button
-                  className="mini-btn"
-                  style={{ marginLeft: 10 }}
-                  onClick={() => setTab("corrections")}
-                  title={t("rag.correctInterpretationTitle")}
-                >
-                  {t("rag.correctInterpretation")}
-                </button>
-              </div>
-              <div className="compare-grid">
-                {rag.sources.map((h) => (
-                  <ResultCard
-                    hit={h}
-                    onPreview={setPreviewTarget}
-                      query={query}
-                    key={`${h.docId}#${h.chunkIndex}`}
-                  />
-                ))}
-              </div>
-            </>
-          )}
         </div>
       )}
 
@@ -1161,6 +1070,35 @@ export default function Home() {
               <h3>{t("modal.liveSample")}</h3>
               <CodeBlock value={schema.sample} />
             </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* ---- Actual MongoDB document (chunk) modal ---- */}
+      <Modal
+        open={docModalOpen}
+        onClose={() => setDocModalOpen(false)}
+        title={t("docModal.title")}
+        subtitle={t("docModal.subtitle", {
+          collection: docModal?.collection ?? status?.collection ?? "chunks",
+        })}
+      >
+        {!docModal && <div className="empty">{t("docModal.loading")}</div>}
+        {docModal?.error && <div className="err">{docModal.error}</div>}
+        {docModal && !docModal.error && (
+          <div className="explain-section">
+            <div className="schema-meta" style={{ marginBottom: 8 }}>
+              <span className="badge type">db: {docModal.database}</span>
+              <span className="badge">collection: {docModal.collection}</span>
+              {docModalId && <span className="badge prop">_id: {docModalId}</span>}
+            </div>
+            <div className="stage-coll">
+              {t("docModal.meta", {
+                collection: docModal.collection,
+                id: docModalId ?? "",
+              })}
+            </div>
+            <CodeBlock value={docModal.document} />
           </div>
         )}
       </Modal>

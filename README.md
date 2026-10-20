@@ -1,5 +1,13 @@
 # Property Operations Assistant — MongoDB Atlas Retrieval Demo
 
+> **New: Building Operations Control Room** (`/control-room`) — a time-series +
+> search operator demo built on this same repo and Atlas cluster. It showcases
+> MongoDB **native time-series storage**, a real **rolling-window anomaly rule**
+> (`$setWindowFields`), **Atlas Search** + **Vector Search** over maintenance
+> knowledge, and a persisted operator work-order workflow. See
+> [`docs/control-room.md`](docs/control-room.md). Setup: `npm run bops:setup`,
+> then open `http://localhost:3100/control-room`. Tests: `npm run bops:test`.
+
 A polished **local** demo that proves **MongoDB Atlas** can power an internal
 operations assistant for a property-management company (managing office towers,
 shopping malls, luxury residences, and residential estates).

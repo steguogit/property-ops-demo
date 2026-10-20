@@ -85,6 +85,16 @@ function highlight(text: string, strongTerms: string[], softTerms: string[]) {
   });
 }
 
+/** Best-effort 1-based page number for a hit (for PDF deep-linking). */
+function pageHintFor(hit: Hit): number | undefined {
+  const m = /\[Page\s+(\d+)\]/i.exec(hit.chunkText || "");
+  if (m) {
+    const n = parseInt(m[1], 10);
+    if (Number.isFinite(n)) return n;
+  }
+  return undefined;
+}
+
 const TYPE_LABEL: Record<string, string> = {
   property_alias_master: "Alias Master",
   duty_roster: "Duty Roster",
@@ -102,10 +112,13 @@ const TYPE_LABEL: Record<string, string> = {
 export function ResultCard({
   hit,
   onPreview,
+  onViewDoc,
   query,
 }: {
   hit: Hit;
   onPreview?: (target: PreviewTarget) => void;
+  /** Open a dialog showing the actual MongoDB document for this chunk. */
+  onViewDoc?: (id: string) => void;
   /** The search/answer query — its keywords are softly highlighted in the excerpt. */
   query?: string;
 }) {
@@ -128,6 +141,33 @@ export function ResultCard({
       <div className="top">
         <span className="rank">#{hit.rank}</span>
         <span className="title">{hit.title}</span>
+        {onViewDoc && (
+          <button
+            type="button"
+            className="doc-json-btn"
+            title={t("card.viewDoc")}
+            aria-label={t("card.viewDoc")}
+            onClick={() => onViewDoc(`${hit.docId}#${hit.chunkIndex}`)}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="14"
+              height="14"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <path d="M14 2v6h6" />
+              <path d="M8 13h8" />
+              <path d="M8 17h8" />
+              <path d="M8 9h2" />
+            </svg>
+          </button>
+        )}
         <span className="score">{hit.score.toFixed(4)}</span>
       </div>
 
@@ -153,6 +193,8 @@ export function ResultCard({
               sourceFileName: hit.title,
               sourceFileType: hit.sourceFileType,
               title: hit.title,
+              highlightText: hit.chunkText,
+              pageHint: pageHintFor(hit),
             })
           }
         />
@@ -198,6 +240,8 @@ export function ResultCard({
               sourceFileName: hit.title,
               sourceFileType: hit.sourceFileType,
               title: hit.title,
+              highlightText: hit.chunkText,
+              pageHint: pageHintFor(hit),
             })
           }
         >

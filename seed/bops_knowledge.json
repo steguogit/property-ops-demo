@@ -1,0 +1,238 @@
+[
+  {
+    "docId": "KB-CHILLER-VIB-001",
+    "docType": "maintenance_procedure",
+    "title": "Chiller compressor vibration investigation procedure",
+    "equipmentType": "chiller",
+    "model": "19XRV",
+    "source": "Plant Maintenance Manual",
+    "revision": "Rev. 4",
+    "docDate": "2025-03-14",
+    "chunkText": "When a water-cooled centrifugal chiller reports rising compressor vibration together with a climbing leaving chilled-water temperature, first confirm the reading against the panel gauge, then inspect for refrigerant charge loss, fouled condenser tubes, and bearing wear. Trend the vibration against electrical input power; a simultaneous rise in both often indicates reduced heat-transfer efficiency rather than a purely mechanical fault.",
+    "procedure": {
+      "steps": [
+        "Verify leaving chilled-water temperature and vibration against local gauges.",
+        "Check condenser approach temperature and tube fouling.",
+        "Inspect compressor bearing oil analysis trend.",
+        "Compare electrical input power to rated load at current lift.",
+        "If degradation persists, schedule condenser tube cleaning."
+      ]
+    }
+  },
+  {
+    "docId": "KB-CHILLER-COOL-002",
+    "docType": "maintenance_procedure",
+    "title": "Restoring chiller cooling capacity after performance loss",
+    "equipmentType": "chiller",
+    "model": "19XRV",
+    "source": "OEM Service Bulletin SB-19XRV-07",
+    "revision": "Rev. 2",
+    "docDate": "2024-11-02",
+    "chunkText": "Loss of cooling capacity on a centrifugal chiller is commonly traced to condenser water flow problems, non-condensable gases, or low refrigerant charge. Purge non-condensables, verify condenser water flow and tower approach, and confirm refrigerant subcooling. Document leaving water temperature before and after each corrective step.",
+    "procedure": {
+      "steps": [
+        "Run the automatic purge cycle and log non-condensable removal.",
+        "Confirm condenser water flow is within design range.",
+        "Measure subcooling and superheat; compare to commissioning values.",
+        "Re-test leaving chilled-water temperature under steady load."
+      ]
+    }
+  },
+  {
+    "docId": "KB-CHILLER-POWER-003",
+    "docType": "service_note",
+    "title": "Interpreting rising electrical input power on chillers",
+    "equipmentType": "chiller",
+    "source": "Energy Team Service Note",
+    "revision": "v1",
+    "docDate": "2025-01-20",
+    "chunkText": "A gradual increase in chiller electrical input power at a stable cooling load usually reflects a drop in coefficient of performance. Causes include condenser fouling, elevated condenser water temperature, or compressor wear. Cross-check kW against leaving water temperature and lift; do not treat instantaneous kW as accumulated energy."
+  },
+  {
+    "docId": "KB-CHILLER-HIST-010",
+    "docType": "historical_incident",
+    "title": "2024 plant-room chiller degradation episode",
+    "equipmentType": "chiller",
+    "model": "19XRV",
+    "source": "Incident Archive",
+    "revision": "final",
+    "docDate": "2024-07-09",
+    "chunkText": "Reduced cooling capacity accompanied by elevated compressor vibration and increased input power on the lead chiller. The unit drew noticeably more electricity while its chilled-water supply warmed over roughly an hour. Investigation found partial condenser tube fouling and a minor refrigerant undercharge. After tube cleaning and a charge top-up, leaving water temperature and vibration returned to baseline. No mechanical compressor failure was found.",
+    "history": {
+      "symptoms": "Reduced cooling capacity accompanied by elevated compressor vibration and increased input power.",
+      "investigation": "Condenser approach temperature was high; tubes were partially fouled and refrigerant was slightly undercharged.",
+      "outcome": "Condenser tubes cleaned and refrigerant topped up; performance recovered to baseline within two hours."
+    }
+  },
+  {
+    "docId": "KB-CHILLER-HIST-011",
+    "docType": "historical_incident",
+    "title": "2023 heatwave chiller efficiency complaint",
+    "equipmentType": "chiller",
+    "source": "Incident Archive",
+    "revision": "final",
+    "docDate": "2023-08-22",
+    "chunkText": "During a heatwave the chiller struggled to hold setpoint; occupants reported warm air while plant logs showed higher-than-usual power draw and creeping supply water temperature. Root cause was elevated condenser water temperature from a fouled cooling tower fill, not a chiller fault. Cleaning the tower restored capacity.",
+    "history": {
+      "symptoms": "Chiller could not hold setpoint during hot weather; higher power draw and warming supply water.",
+      "investigation": "Cooling-tower fill was fouled, raising condenser water temperature.",
+      "outcome": "Tower fill cleaned; chiller capacity and power returned to normal."
+    }
+  },
+  {
+    "docId": "KB-CHILLER-DP-004",
+    "docType": "service_note",
+    "title": "Chiller evaporator differential pressure monitoring",
+    "equipmentType": "chiller",
+    "source": "Controls Team Note",
+    "revision": "v1",
+    "docDate": "2025-02-28",
+    "chunkText": "Differential pressure across the evaporator reflects chilled-water flow. A rising differential pressure at constant pump speed can indicate restriction or strainer fouling. Add the differential-pressure point to the chiller only when a DP transmitter is installed; historical absence of this signal is expected and should be shown as unavailable, not zero."
+  },
+  {
+    "docId": "KB-PUMP-FLOW-020",
+    "docType": "maintenance_procedure",
+    "title": "Chilled-water pump low-flow troubleshooting",
+    "equipmentType": "pump",
+    "model": "NB 125-250",
+    "source": "Plant Maintenance Manual",
+    "revision": "Rev. 3",
+    "docDate": "2025-04-01",
+    "chunkText": "If a primary chilled-water pump shows reduced flow rate, check the suction strainer, verify the VFD speed command, and inspect for a partially closed isolation valve. Cavitation noise with low flow suggests insufficient net positive suction head. Flow and head should track the pump curve.",
+    "procedure": {
+      "steps": [
+        "Inspect and clean the suction strainer.",
+        "Confirm VFD speed matches the control command.",
+        "Verify isolation valves are fully open.",
+        "Check for cavitation / NPSH margin."
+      ]
+    }
+  },
+  {
+    "docId": "KB-PUMP-HIST-021",
+    "docType": "historical_incident",
+    "title": "Pump strainer blockage event",
+    "equipmentType": "pump",
+    "source": "Incident Archive",
+    "revision": "final",
+    "docDate": "2024-05-17",
+    "chunkText": "The primary pump flow fell while motor current stayed flat. A blocked suction strainer was found and cleaned, restoring design flow. No bearing or seal damage.",
+    "history": {
+      "symptoms": "Falling flow rate at steady motor current.",
+      "investigation": "Suction strainer was blocked with debris.",
+      "outcome": "Strainer cleaned; flow restored to design."
+    }
+  },
+  {
+    "docId": "KB-AHU-FILTER-030",
+    "docType": "maintenance_procedure",
+    "title": "AHU filter differential and supply air temperature checks",
+    "equipmentType": "ahu",
+    "model": "Climate Changer",
+    "source": "Plant Maintenance Manual",
+    "revision": "Rev. 2",
+    "docDate": "2025-03-30",
+    "chunkText": "Rising supply air temperature on an air handling unit with normal chilled-water supply may indicate a dirty coil, a stuck control valve, or an economizer fault. Check filter differential pressure and valve actuator stroke. Replace MERV filters per schedule.",
+    "procedure": {
+      "steps": [
+        "Read filter differential pressure and compare to clean baseline.",
+        "Verify chilled-water valve stroke and actuator feedback.",
+        "Inspect coil for fouling.",
+        "Confirm economizer dampers are commanded correctly."
+      ]
+    }
+  },
+  {
+    "docId": "KB-AHU-HIST-031",
+    "docType": "historical_incident",
+    "title": "AHU warm supply air due to stuck valve",
+    "equipmentType": "ahu",
+    "source": "Incident Archive",
+    "revision": "final",
+    "docDate": "2024-09-03",
+    "chunkText": "Supply air temperature drifted high while chilled water was available. The chilled-water control valve actuator was stuck partially closed. Replacing the actuator restored supply air temperature.",
+    "history": {
+      "symptoms": "High supply air temperature with chilled water available.",
+      "investigation": "Chilled-water valve actuator stuck partially closed.",
+      "outcome": "Actuator replaced; supply air temperature recovered."
+    }
+  },
+  {
+    "docId": "KB-SEC-DOOR-040",
+    "docType": "service_note",
+    "title": "Plant-room door-held-open handling",
+    "equipmentType": "door_contact",
+    "source": "Security Operations Note",
+    "revision": "v2",
+    "docDate": "2025-02-10",
+    "chunkText": "A plant-room door-held-open event is logged when a door contact stays open beyond the configured threshold. Operators should confirm whether maintenance access is in progress. A door event occurring near an equipment anomaly is contextual only and does not establish a cause."
+  },
+  {
+    "docId": "KB-SEC-ACCESS-041",
+    "docType": "service_note",
+    "title": "Access panel denied-entry reason codes",
+    "equipmentType": "access_panel",
+    "model": "VertX EVO",
+    "source": "Security Operations Note",
+    "revision": "v1",
+    "docDate": "2025-01-05",
+    "chunkText": "Access-denied events carry a synthetic reason code and reader identifier. Common codes: INVALID_CARD, SCHEDULE_LOCKOUT, ANTIPASSBACK. These records contain no personal identity, image, or video data."
+  },
+  {
+    "docId": "KB-GEN-SAFETY-050",
+    "docType": "maintenance_procedure",
+    "title": "Plant-room lockout/tagout general procedure",
+    "equipmentType": "general",
+    "source": "Safety Manual",
+    "revision": "Rev. 5",
+    "docDate": "2025-05-12",
+    "chunkText": "Before any intrusive maintenance in the central plant room, apply lockout/tagout to the affected equipment, verify zero energy state, and record the permit. This procedure applies to chillers, pumps, and air handling units alike.",
+    "procedure": {
+      "steps": [
+        "Identify all energy sources for the asset.",
+        "Apply locks and tags; verify isolation.",
+        "Confirm zero-energy state before work.",
+        "Record the permit and notify the control room."
+      ]
+    }
+  },
+  {
+    "docId": "KB-CHILLER-REFRIG-005",
+    "docType": "service_note",
+    "title": "R-134a charge and subcooling reference",
+    "equipmentType": "chiller",
+    "model": "19XRV",
+    "source": "Refrigeration Team Note",
+    "revision": "v3",
+    "docDate": "2025-04-18",
+    "chunkText": "For R-134a centrifugal machines, confirm subcooling against the commissioning record before adjusting charge. Low charge reduces cooling capacity and can raise compressor vibration as the machine hunts. Never add charge without a leak check."
+  },
+  {
+    "docId": "KB-CHILLER-CONDENSER-006",
+    "docType": "maintenance_procedure",
+    "title": "Condenser tube cleaning schedule and method",
+    "equipmentType": "chiller",
+    "source": "Plant Maintenance Manual",
+    "revision": "Rev. 4",
+    "docDate": "2025-03-14",
+    "chunkText": "Condenser tube fouling raises condensing temperature, which reduces cooling capacity and increases electrical input power. Brush-clean tubes at the scheduled interval or when approach temperature exceeds the alarm threshold. Record approach temperature before and after cleaning.",
+    "procedure": {
+      "steps": [
+        "Isolate the condenser water circuit.",
+        "Brush-clean each tube and flush.",
+        "Re-measure condenser approach temperature.",
+        "Return to service and trend leaving water temperature."
+      ]
+    }
+  },
+  {
+    "docId": "KB-GEN-TREND-051",
+    "docType": "service_note",
+    "title": "Using rolling baselines for equipment trend alarms",
+    "equipmentType": "general",
+    "source": "Analytics Team Note",
+    "revision": "v1",
+    "docDate": "2025-06-01",
+    "chunkText": "A rolling baseline compares a current reading against the recent average, excluding the newest samples so a gradual drift cannot hide in an adapting mean. Require a minimum sample count before alarming and a few consecutive breaches to suppress noise. Correlation with nearby events is context, not causation."
+  }
+]

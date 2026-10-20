@@ -610,6 +610,34 @@ export interface ConversationDoc {
   updatedAt: string;
 }
 
+/**
+ * Rich metadata for an assistant turn, persisted so the chat UI can fully
+ * rehydrate a past turn after a refresh (pipeline steps, recalled memory,
+ * source evidence, models) instead of only the answer text.
+ */
+export interface AssistantTurnMeta {
+  /** Retrieval mode used ("rerank" | "hybrid" | ...). */
+  mode?: string;
+  /** Whether an LLM (vs extractive fallback) produced the answer. */
+  llmUsed?: boolean;
+  /** Models used for this turn (embedding / reranker / LLM). */
+  models?: { role: string; name: string }[];
+  /** Ordered pipeline steps + timings. */
+  steps?: { step: string; ms: number; note?: string }[];
+  /** Older turns recalled from memory for this question. */
+  recalled?: {
+    conversationId: string;
+    messageIndex: number;
+    role: "user" | "assistant";
+    messageText: string;
+    createdAt: string;
+    score: number;
+    via: string;
+  }[];
+  /** Full source-evidence hits used to ground the answer. */
+  sources?: Record<string, unknown>[];
+}
+
 /** A single turn in a conversation. `messageText` is embedded + lexically indexed. */
 export interface ConversationMessageDoc {
   /** `${conversationId}#${messageIndex}` — mirrors the chunk _id convention. */
@@ -624,6 +652,8 @@ export interface ConversationMessageDoc {
   embedding?: number[];
   /** docIds the assistant grounded this answer on (assistant turns only). */
   sourceDocIds?: string[];
+  /** Rich assistant-turn metadata so the UI can rehydrate after refresh. */
+  assistantMeta?: AssistantTurnMeta;
   createdAt: string;
 }
 
@@ -765,6 +795,35 @@ export async function getPolicySimulationsCollection(): Promise<
 > {
   const db = await getDb();
   return db.collection<PolicyImpactSimulation>(env.policySimulationsCollection);
+}
+
+/**
+ * A single token/usage event from a model API call (LLM, embeddings, rerank).
+ * Recorded best-effort so the Dashboard can show real token consumption.
+ */
+export interface UsageEventDoc {
+  _id?: string;
+  /** Logical operation that triggered the call: rag | generate | chat | embed | rerank | proposal. */
+  operation: string;
+  /** Provider family: llm | voyage | atlas-model. */
+  provider: string;
+  /** Model name used. */
+  model: string;
+  /** "chat" | "embedding" | "rerank". */
+  kind: string;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens: number;
+  /** Optional demo dataset scope. */
+  datasetId?: string;
+  createdAt: string;
+}
+
+export async function getUsageEventsCollection(): Promise<
+  Collection<UsageEventDoc>
+> {
+  const db = await getDb();
+  return db.collection<UsageEventDoc>(env.usageEventsCollection);
 }
 
 /** GridFS bucket for storing original uploaded files (for content preview). */

@@ -1,4 +1,5 @@
 import { env, hasVoyage, hasReranker } from "./env";
+import { recordUsage, estimateTokens } from "./usage";
 
 const VOYAGE_BASE = "https://api.voyageai.com/v1";
 
@@ -33,7 +34,16 @@ export async function voyageEmbed(
   }
   const json = (await res.json()) as {
     data: { embedding: number[]; index: number }[];
+    usage?: import("./usage").RawUsage;
   };
+  void recordUsage({
+    operation: "embed",
+    provider: "voyage",
+    model: env.voyageEmbedModel,
+    kind: "embedding",
+    usage: json.usage,
+    fallbackTotal: texts.reduce((a, t) => a + estimateTokens(t), 0),
+  });
   // Sort by index to preserve input order.
   return json.data
     .sort((a, b) => a.index - b.index)
@@ -100,7 +110,16 @@ export async function voyageEmbedMultimodal(
   }
   const json = (await res.json()) as {
     data: { embedding: number[]; index: number }[];
+    usage?: import("./usage").RawUsage;
   };
+  void recordUsage({
+    operation: "embed",
+    provider: "atlas-model",
+    model: env.multimodalEmbedModel,
+    kind: "embedding",
+    usage: json.usage,
+    fallbackTotal: texts.reduce((a, t) => a + estimateTokens(t), 0),
+  });
   return json.data.sort((a, b) => a.index - b.index).map((d) => d.embedding);
 }
 
@@ -225,7 +244,19 @@ export async function voyageRerank(
   }
   const json = (await res.json()) as {
     data: { index: number; relevance_score: number }[];
+    usage?: import("./usage").RawUsage;
   };
+  void recordUsage({
+    operation: "rerank",
+    provider: env.rerankBaseUrl.includes("ai.mongodb.com")
+      ? "atlas-model"
+      : "voyage",
+    model: env.voyageRerankModel,
+    kind: "rerank",
+    usage: json.usage,
+    fallbackTotal:
+      estimateTokens(query) + documents.reduce((a, d) => a + estimateTokens(d), 0),
+  });
   return json.data
     .map((d) => ({ index: d.index, relevanceScore: d.relevance_score }))
     .sort((a, b) => b.relevanceScore - a.relevanceScore);

@@ -45,6 +45,22 @@ interface IngestStep {
   note?: string;
 }
 
+/** A persisted ingestion job (processing trace) returned by the history API. */
+interface IngestionJobView {
+  jobId: string;
+  documentId: string;
+  sourceFileName: string;
+  status: string;
+  steps: IngestStep[];
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+  docTitle?: string;
+  sourceFileType?: string;
+  chunkCount?: number;
+  ocrUsed?: boolean;
+}
+
 /** One item in the bulk-upload queue, tracked live in the UI. */
 interface QueueItem {
   id: string;
@@ -128,6 +144,9 @@ export function DocumentsTab() {
   // staged selection; `queue` is the live processing view during ingestion.
   const [files, setFiles] = useState<File[]>([]);
   const [queue, setQueue] = useState<QueueItem[]>([]);
+  // Persisted processing history (survives refresh), scoped to the dataset.
+  const [history, setHistory] = useState<IngestionJobView[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(true);
 
   // upload form metadata (applied to every file in a bulk upload)
   const [meta, setMeta] = useState({
@@ -154,9 +173,22 @@ export function DocumentsTab() {
     }
   }
 
+  async function loadHistory() {
+    try {
+      const res = await fetch(
+        `/api/ingestion-jobs?datasetId=${encodeURIComponent(datasetId)}`
+      );
+      const data = await res.json();
+      setHistory(data.jobs ?? []);
+    } catch {
+      /* best-effort */
+    }
+  }
+
   // Reload whenever the active dataset changes (isolation: only its docs show).
   useEffect(() => {
     load();
+    loadHistory();
     setSelected(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [datasetId]);
@@ -291,6 +323,7 @@ export function DocumentsTab() {
     });
     setUploading(false);
     await refreshDatasets();
+    await loadHistory();
   }
 
   async function patch(documentId: string, body: any) {
@@ -333,6 +366,7 @@ export function DocumentsTab() {
         }),
       });
       await load();
+      await loadHistory();
       if (selected?.documentId === documentId) {
         const r = await fetch(`/api/documents/${documentId}`);
         setSelected((await r.json()).document);
@@ -573,6 +607,40 @@ export function DocumentsTab() {
             <div className="ingest-queue">
               {queue.map((it) => (
                 <ProcessingCard key={it.id} item={it} />
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Persisted processing history — collapsible, survives refresh. Each
+          document's ingestion trace can be folded up/down independently. */}
+      <div className="panel">
+        <div
+          className="history-panel-head"
+          onClick={() => setHistoryOpen((v) => !v)}
+          role="button"
+          tabIndex={0}
+        >
+          <div>
+            <h2 style={{ margin: 0 }}>
+              {t("docs.historyTitle")}{" "}
+              <span className="history-count">{history.length}</span>
+            </h2>
+            <p className="sub" style={{ margin: "2px 0 0" }}>
+              {t("docs.historySub")}
+            </p>
+          </div>
+          <span className="history-caret">{historyOpen ? "▾" : "▸"}</span>
+        </div>
+        {historyOpen && (
+          <div style={{ marginTop: 12 }}>
+            {!history.length && (
+              <div className="empty">{t("docs.historyEmpty")}</div>
+            )}
+            <div className="history-list">
+              {history.map((j) => (
+                <HistoryCard key={j.jobId} job={j} />
               ))}
             </div>
           </div>
@@ -973,6 +1041,107 @@ function ProcessingCard({ item }: { item: QueueItem }) {
       {showTrace && item.steps && (
         <div style={{ marginTop: 8 }}>
           <CodeBlock value={item.steps} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One persisted ingestion trace in the collapsible Processing History. Folded up
+ * by default; expanding reveals the real per-step durations (same visual as the
+ * live upload view) plus an optional raw trace. Reads entirely from the stored
+ * `ingestion_jobs` record, so it is available long after the upload finished.
+ */
+function HistoryCard({ job }: { job: IngestionJobView }) {
+  const [open, setOpen] = useState(false);
+  const [showTrace, setShowTrace] = useState(false);
+  const steps = job.steps ?? [];
+  const maxMs = Math.max(1, ...steps.map((s) => s.ms ?? 0));
+  const sumMs = steps.reduce((a, s) => a + (s.ms ?? 0), 0);
+  const when = new Date(job.createdAt);
+
+  return (
+    <div className={`history-card ${job.status}`}>
+      <div
+        className="history-card-head"
+        onClick={() => setOpen((v) => !v)}
+        role="button"
+        tabIndex={0}
+      >
+        <span className="history-caret sm">{open ? "▾" : "▸"}</span>
+        <span className="history-file" title={job.sourceFileName}>
+          {job.docTitle || job.sourceFileName}
+        </span>
+        <span className="history-meta">
+          {job.sourceFileType && (
+            <span className="badge file">{job.sourceFileType}</span>
+          )}
+          {job.ocrUsed && <span className="badge ocr">OCR</span>}
+          {typeof job.chunkCount === "number" && (
+            <span className="history-chunks">{job.chunkCount} chunks</span>
+          )}
+          <span className="history-time" title={when.toLocaleString()}>
+            {when.toLocaleString()}
+          </span>
+          <span className="history-dur">{fmtMs(sumMs)}</span>
+          <span className={`status-tag ${job.status}`}>{job.status}</span>
+        </span>
+      </div>
+
+      {open && (
+        <div className="history-card-body">
+          {steps.length > 0 ? (
+            <div className="step-list">
+              {steps.map((s, i) => {
+                const meta = STEP_LABELS[s.step];
+                const pct = Math.round(((s.ms ?? 0) / maxMs) * 100);
+                const skipped =
+                  s.status === "skipped" || s.status === "low_confidence";
+                return (
+                  <div className="step-row" key={`${s.step}-${i}`}>
+                    <div className="step-row-head">
+                      <span className="step-name" title={meta?.why}>
+                        {stepLabel(s.step)}
+                      </span>
+                      <span className="step-ms">{fmtMs(s.ms)}</span>
+                    </div>
+                    <div className="step-bar-track">
+                      <div
+                        className={`step-bar-fill ${skipped ? "skipped" : ""}`}
+                        style={{ width: `${Math.max(pct, s.ms ? 3 : 0)}%` }}
+                      />
+                    </div>
+                    {(s.note || skipped) && (
+                      <div className="step-note">
+                        {skipped ? "skipped — " : ""}
+                        {s.note}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="empty">No step trace recorded.</div>
+          )}
+          {job.errorMessage && (
+            <div className="ingest-summary" style={{ color: "var(--red, #d33)" }}>
+              {job.errorMessage}
+            </div>
+          )}
+          <div className="ingest-summary">
+            <span>server work: {fmtMs(sumMs)}</span>
+            <span>job: {job.jobId}</span>
+            <button className="mini-btn" onClick={() => setShowTrace((v) => !v)}>
+              {showTrace ? "Hide raw trace" : "Show raw trace"}
+            </button>
+          </div>
+          {showTrace && (
+            <div style={{ marginTop: 8 }}>
+              <CodeBlock value={job.steps} />
+            </div>
+          )}
         </div>
       )}
     </div>

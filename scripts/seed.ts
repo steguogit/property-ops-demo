@@ -47,10 +47,11 @@ function loadJson<T>(file: string): T[] {
 async function main() {
   const docs = [
     ...loadJson<SeedDoc>("property_docs.json"),
+    ...loadJson<SeedDoc>("property_docs_icc.json"),
     ...loadJson<SeedDoc>("property_docs_v2.json"),
     ...loadJson<SeedDoc>("property_docs_mn.json"),
   ];
-  console.log(`Loaded ${docs.length} source documents (base + v2 + mn).`);
+  console.log(`Loaded ${docs.length} source documents (base + icc + v2 + mn).`);
 
   const col = await getCollection();
 

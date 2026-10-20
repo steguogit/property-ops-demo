@@ -34,6 +34,11 @@ export const env = {
   ingestionJobsCollection:
     process.env.MONGODB_INGESTION_JOBS_COLLECTION ?? "ingestion_jobs",
 
+  // Token/usage audit trail for model API calls (LLM / embeddings / rerank),
+  // powering the Dashboard's token-consumption metrics.
+  usageEventsCollection:
+    process.env.MONGODB_USAGE_EVENTS_COLLECTION ?? "usage_events",
+
   // ----- Conversational memory (chat history + semantic recall) -----
   // Two collections: conversation threads, and the individual messages. Each
   // message is semantically embedded so past turns can be recalled with

@@ -13,6 +13,8 @@ import {
   recallMemory,
   RecalledMessage,
 } from "./memory";
+import { modelsForMode } from "./models";
+import { recordUsage, estimateTokens } from "./usage";
 
 export interface RagResult {
   answer: string;
@@ -119,6 +121,10 @@ async function llmAnswer(
     history?: ChatTurn[];
     /** Relevant older turns recalled from memory (semantic/keyword). */
     recalledContext?: string;
+    /** Operation label for token-usage tracking. */
+    operation?: string;
+    /** Demo dataset scope for token-usage tracking. */
+    datasetId?: string;
   }
 ): Promise<string> {
   const context = buildContext(hits);
@@ -130,7 +136,9 @@ async function llmAnswer(
     "Prefer the newest / non-obsolete version of a procedure when versions differ. " +
     "Approved term meanings and answer instructions are AUTHORITATIVE: apply them exactly and never override them with your own interpretation. " +
     (conversational
-      ? "This is a multi-turn conversation: use the prior turns and recalled memory to resolve references like 'it', 'that', 'the previous one'. "
+      ? "This is a multi-turn conversation. The 'Context records' below are freshly retrieved from the document corpus for THIS question and are your PRIMARY, AUTHORITATIVE source of facts — always read them in full and answer from them. " +
+        "The 'Relevant earlier conversation memory' is ONLY for resolving references like 'it', 'that', 'the previous one' and for continuity; it is NOT the source of truth. " +
+        "NEVER say information is unavailable just because it was not mentioned earlier in the conversation — if the Context records contain the answer, use them. Only say information is missing if it is absent from BOTH the Context records AND memory. "
       : "") +
     // ---- Output formatting & grounding rules ----
     "OUTPUT RULES: " +
@@ -152,11 +160,14 @@ async function llmAnswer(
     `Question: ${query}\n\n` +
     (policyBlock ? `${policyBlock}\n\n` : "") +
     (correctionBlock ? `${correctionBlock}\n\n` : "") +
+    // Authoritative, freshly-retrieved corpus context comes FIRST so the model
+    // answers from it rather than anchoring on the (secondary) chat memory.
+    `Context records (freshly retrieved — authoritative source of facts):\n${context}\n\n` +
     (extra?.recalledContext
-      ? `Relevant earlier conversation memory:\n${extra.recalledContext}\n\n`
+      ? `Relevant earlier conversation memory (for reference resolution and continuity ONLY — not a source of facts):\n${extra.recalledContext}\n\n`
       : "") +
-    `Context records:\n${context}\n\n` +
-    "Provide a grounded answer. Cite sources inline as [docId p.N] using the docId and page label shown for each record. " +
+    "Provide a grounded answer using the Context records above. Cite sources inline as [docId p.N] using the docId and page label shown for each record. " +
+    "Do not claim information is unavailable if it appears in the Context records, even if it was not mentioned earlier in the conversation. " +
     "If the answer involves any numbers/totals, show a Markdown table with a per-line-item breakdown and a Total row (figures only from the context).";
 
   // Grove gateway uses an `api-key` header; OpenAI-compatible uses Bearer.
@@ -190,8 +201,21 @@ async function llmAnswer(
   }
   const json = (await res.json()) as {
     choices: { message: { content: string } }[];
+    usage?: import("./usage").RawUsage;
   };
-  return json.choices[0]?.message?.content ?? "(no answer)";
+  const content = json.choices[0]?.message?.content ?? "(no answer)";
+  // Best-effort token accounting for the Dashboard.
+  void recordUsage({
+    operation: extra?.operation ?? "rag",
+    provider: "llm",
+    model: env.llmModel,
+    kind: "chat",
+    usage: json.usage,
+    fallbackTotal:
+      estimateTokens(JSON.stringify(messages)) + estimateTokens(content),
+    datasetId: extra?.datasetId,
+  });
+  return content;
 }
 
 /**
@@ -246,7 +270,10 @@ export async function runRag(
   let llmUsed = false;
   if (hasLLM()) {
     try {
-      answer = await llmAnswer(query, hits, appliedCorrections, policyPlan);
+      answer = await llmAnswer(query, hits, appliedCorrections, policyPlan, {
+        operation: "rag",
+        datasetId: opts.datasetId,
+      });
       llmUsed = true;
     } catch (e) {
       answer =
@@ -354,7 +381,9 @@ export async function generateFromHits(
     answer = "No candidate records were provided to ground an answer.";
   } else if (hasLLM()) {
     try {
-      answer = await llmAnswer(query, hits, appliedCorrections, policyPlan);
+      answer = await llmAnswer(query, hits, appliedCorrections, policyPlan, {
+        operation: "generate",
+      });
       llmUsed = true;
     } catch (e) {
       answer =
@@ -392,6 +421,8 @@ export interface ChatResult extends RagResult {
   recalled: RecalledMessage[];
   /** Ordered pipeline steps taken to produce this turn (for transparency). */
   steps: ChatStep[];
+  /** Models used for this turn (embedding / reranker / LLM). */
+  models?: { role: string; name: string }[];
 }
 
 function buildRecalledContext(recalled: RecalledMessage[]): string {
@@ -514,6 +545,8 @@ export async function chatRag(
       answer = await llmAnswer(query, hits, appliedCorrections, policyPlan, {
         history,
         recalledContext: buildRecalledContext(recalled),
+        operation: "chat",
+        datasetId: opts.datasetId,
       });
       llmUsed = true;
     } catch (e) {
@@ -526,12 +559,24 @@ export async function chatRag(
   }
   endGen(llmUsed ? env.llmModel : "extractive (no LLM)");
 
-  // 5. Persist the assistant turn (embedded, with its grounding docIds).
+  // 5. Persist the assistant turn (embedded, with its grounding docIds). We also
+  // persist the rich turn metadata (steps, recalled memory, source evidence,
+  // models) so the chat UI can fully rehydrate this turn after a page refresh
+  // instead of showing only the answer text.
   const endPersistAssistant = stepTimer(
     "Store assistant turn in memory (embedded)"
   );
+  const models = modelsForMode("rag");
   await appendMessage(conversationId, "assistant", answer, {
     sourceDocIds: hits.map((h) => h.docId),
+    assistantMeta: {
+      mode,
+      llmUsed,
+      models,
+      steps,
+      recalled,
+      sources: hits as unknown as Record<string, unknown>[],
+    },
   });
   endPersistAssistant();
 
@@ -539,6 +584,7 @@ export async function chatRag(
     answer,
     mode,
     llmUsed,
+    models,
     sources: hits,
     appliedCorrections,
     expandedAliases,
